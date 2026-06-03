@@ -24,6 +24,40 @@ out of the momentum `p`; vs. VM-MedSAM's post-hoc Hausdorff on the mask), and
 > benchmark *numbers* still require a GPU, pretrained MedSAM/SAM ViT-B weights,
 > and the datasets.
 
+## Run it on the H100 (copy-paste)
+
+```bash
+# 0. Get the latest code. Downloaded data/checkpoints are git-ignored, so a
+#    pull won't conflict with anything you've already fetched.
+cd hamSam && git pull
+
+# 1. One-time deps (envs cloned before nibabel was pinned need this).
+pip install -r requirements.txt
+pip install git+https://github.com/facebookresearch/segment-anything.git \
+  || pip install segment-anything-py
+
+# 2. Verify every component on the GPU (real SAM decoder, all configs/losses).
+bash scripts/run_smoke.sh
+
+# 3. (Optional) pretrained ViT-B weights. Random-init works for wiring tests;
+#    pretrained MedSAM/SAM is needed for meaningful accuracy.
+bash scripts/download_checkpoints.sh          # -> checkpoints/sam_vit_b_01ec64.pth
+
+# 4. Data: FLARE22 auto-downloads AND converts (open, Zenodo). BTCV prints its
+#    gated Synapse steps.
+bash scripts/download_datasets.sh             # -> data/processed/flare22/{train,val,test}
+
+# 5. Train on FLARE22 (single-dataset config; use vmdata only once all 8 exist).
+python experiments/train_ham_medsam.py --config configs/ham_medsam_abdomen.yaml \
+    --encoder ham --bottleneck deepest --loss dice+ce+momentum --seed 42 \
+    --output_dir outputs/ham/seed_42 --device cuda
+```
+
+To use pretrained weights, set `model.sam_checkpoint: checkpoints/sam_vit_b_01ec64.pth`
+in `configs/ham_medsam_abdomen.yaml` (keep `input_size: 1024`). Before trusting
+per-organ names, open one converted `org1_liver` mask and confirm the label
+order matches your FLARE22 release (else pass `--label_map_json`).
+
 ## Layout
 ```
 src/        hamiltonian.py (primitive, bug-fixed) · ham_encoder.py · ham_medsam.py
