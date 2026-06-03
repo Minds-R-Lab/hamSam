@@ -1,35 +1,45 @@
 # Data preparation
 
-This folder will hold the dataset download / preprocessing scripts. The
-extension reuses HamVision's `prepare_data.py` pipeline as a starting
-point; the only new datasets are abdomen CT (Li et al.'s benchmark)
-and a SAM-style 1024 x 1024 resize step.
+Ham-MedSAM uses the **same eight datasets as VM-MedSAM** (Li et al. 2026,
+Table 1) so the comparison is apples-to-apples. All are trained as binary,
+box-promptable segmentation (the SAM/MedSAM paradigm: one (image, box, binary
+mask) sample per structure instance). VM-MedSAM trains jointly across all eight
+(`configs/ham_medsam_vmdata.yaml`).
 
-## Datasets
+## Datasets (VM-MedSAM Table 1)
 
-| Dataset | Modality | Used for | Public? | Notes |
+| Dataset | Modality | Target | Size (paper) | Source |
 |---|---|---|---|---|
-| FLARE22 | Abdomen CT, 12 organs | Phase 0-3 | yes | https://flare22.grand-challenge.org |
-| BTCV | Abdomen CT, 13 organs | Phase 0-3 (alt) | yes | Synapse multi-organ benchmark |
-| LIDC-IDRI | Lung CT | Phase 0 reproduction | yes | substitute for Li et al.'s lung-cancer set |
-| BraTS 2021 | Brain MRI | Phase 0 reproduction | yes | substitute for Li et al.'s brain-tumour set |
-| ISIC 2018 | Dermoscopy | Phase 5 zero-shot | yes | already in HamVision suite |
-| TN3K | Thyroid US | Phase 5 zero-shot | yes | already in HamVision suite |
-| ACDC | Cardiac MRI | Phase 5 zero-shot | yes | already in HamVision suite |
+| BTCV | Abdominal CT | 13 organs | 5,000 slices | Synapse multi-atlas labeling |
+| FLARE22 | Abdominal CT | 13 organs | 5,000 slices | https://flare22.grand-challenge.org |
+| MSD Lung | Chest CT | lung cancer | 630 slices | http://medicaldecathlon.com |
+| BraTS | MRI (FLAIR) | brain tumor | 4,840 slices | http://braintumorsegmentation.org |
+| CVC-ClinicDB | Colonoscopy | polyp | 612 images | polyp.grand-challenge.org/CVCClinicDB |
+| BUSI | Ultrasound | breast tumor | 1,312 images | Breast Ultrasound Images dataset |
+| DRIVE | Fundus photo | retinal vessel | 20 images | https://drive.grand-challenge.org |
+| Montgomery | Chest X-ray | lung | 138 images | Montgomery County X-ray set |
 
-## Preprocessing
+Patient-level splits are used for 3D volumes (CT/MRI) to avoid slice leakage.
 
-SAM/MedSAM operate on 1024 x 1024 RGB images. The preprocessing
-pipeline is:
+## Optional zero-shot probes (NOT in VM-MedSAM)
 
-1. Resize the longer side to 1024 (keep aspect ratio).
-2. Pad the shorter side to 1024 with zeros.
-3. Replicate the single channel to 3 channels for grayscale modalities.
-4. Normalise to ImageNet statistics (mean=[0.485, 0.456, 0.406],
-   std=[0.229, 0.224, 0.225]) **only** if the SAM mask decoder
-   expects it; for medical encoders trained from scratch, dataset
-   statistics often work better.
+Used only by `experiments/eval_zero_shot.py` to test transfer to genuinely
+unseen domains: **ISIC 2018** (dermoscopy — a modality absent from the eight),
+plus **TN3K** (thyroid US) and **ACDC** (cardiac MRI) as unseen-organ probes.
 
-The HamVision `prepare_data.py` already handles steps 1-3; the
-SAM-specific normalisation is added in `data/sam_preprocess.py` (to be
-written).
+## Preprocessing (`sam_preprocess.py`)
+
+1. Resize longest side to 1024 (keep aspect ratio).
+2. Pad to 1024×1024 (zeros).
+3. Replicate single channel to 3 for grayscale modalities.
+4. Normalise: `none` (default, [0,1]) or `imagenet`. For encoders trained from
+   scratch, dataset statistics often beat ImageNet stats.
+
+## Layout produced by `prepare_data.py`
+
+```
+data/processed/<dataset>/{train,val,test}/images/<id>.npy   # HxW or HxWx3
+data/processed/<dataset>/{train,val,test}/masks/<id>.npy    # HxW {0,1}
+```
+Converters require challenge access and are stubbed with per-dataset
+instructions; multi-organ CT volumes are exploded into per-organ binary masks.

@@ -129,34 +129,60 @@ def _boundary_proximity(gt_mask, out_hw, clip_dt, target):
 
 
 class MomentumBoundaryLoss(nn.Module):
-    """Supervise the encoder momentum |p| against a boundary-proximity map.
+    """Encoder-level boundary supervision on the Hamiltonian momentum p.
 
-    L_p = lambda_p * || softplus(|p|_avg_normalised) - target_map ||_1
+    RECOMMENDED mode='projection' (default): a small learned 1x1 conv reads a
+    boundary logit out of p, supervised (BCE + soft-Dice) against a soft
+    boundary band derived from the GT. This serves the loss's purpose (sharper
+    boundaries / lower 95%-Hausdorff) while still pushing gradients into p, and
+    it does NOT overwrite p's natural interior-dominant structure (HamVision
+    reports |p|: interior > boundary > exterior). The projection params live in
+    this module, so add `loss_fn.parameters()` to the optimizer (the training
+    script does this).
 
-    |p|_avg is the channel-averaged momentum magnitude (B,1,h,w), min-max
-    normalised per-sample to [0,1] so the scale matches the target map.
+    mode='template': the original hypothesis -- match softplus(|p|_avg)
+    (per-sample min-max normalised) directly to a target map. Kept for ablation.
+    See the module docstring for why the literal 'distance' target inverts the
+    plan's stated intent; 'band'/'proximity' realise the intent.
+
+    target in {'band','proximity','distance'} selects the supervision map.
     """
 
     def __init__(self, lambda_p: float = 0.1, clip_dt: float = 20.0,
-                 target: str = 'proximity'):
+                 mode: str = 'projection', target: str = 'band',
+                 momentum_channels: int = 256):
         super().__init__()
+        assert mode in ('projection', 'template')
         assert target in ('proximity', 'distance', 'band')
         self.lambda_p = lambda_p
         self.clip_dt = clip_dt
+        self.mode = mode
         self.target = target
+        if mode == 'projection':
+            self.proj = nn.Conv2d(momentum_channels, 1, 1)
+            self.bce = nn.BCEWithLogitsLoss()
 
     def forward(self, p, gt_mask):
-        if p is None:
+        if p is None:                       # baseline encoder (bottleneck='none')
             return torch.zeros((), device=gt_mask.device)
+        out_hw = p.shape[-2:]
+        with torch.no_grad():
+            tgt = _boundary_proximity(gt_mask, out_hw, self.clip_dt, self.target)
+
+        if self.mode == 'projection':
+            logit = self.proj(p)            # (B,1,h,w)
+            bce = self.bce(logit, tgt)
+            prob = torch.sigmoid(logit).flatten(1)
+            t = tgt.flatten(1)
+            dice = 1 - (2 * (prob * t).sum(1) + 1) / (prob.sum(1) + t.sum(1) + 1)
+            return self.lambda_p * (bce + dice.mean())
+
+        # template mode
         p_avg = F.softplus(p.abs().mean(dim=1, keepdim=True))
-        # per-sample min-max normalise to [0,1]
         flat = p_avg.flatten(1)
         mn = flat.min(1, keepdim=True).values.view(-1, 1, 1, 1)
         mx = flat.max(1, keepdim=True).values.view(-1, 1, 1, 1)
         p_norm = (p_avg - mn) / (mx - mn + 1e-6)
-        with torch.no_grad():
-            tgt = _boundary_proximity(gt_mask, p_avg.shape[-2:], self.clip_dt,
-                                      self.target)
         return self.lambda_p * (p_norm - tgt).abs().mean()
 
 
@@ -175,7 +201,8 @@ class CombinedLoss(nn.Module):
     def __init__(self, multiclass=False, num_classes=1,
                  w_dice=1.0, w_ce=1.0, w_hausdorff=1.0,
                  use_hausdorff=False, use_momentum=False,
-                 lambda_p=0.1, clip_dt=20.0, momentum_target='proximity'):
+                 lambda_p=0.1, clip_dt=20.0, momentum_mode='projection',
+                 momentum_target='band', momentum_channels=256):
         super().__init__()
         self.multiclass = multiclass
         self.num_classes = num_classes
@@ -187,7 +214,8 @@ class CombinedLoss(nn.Module):
         if use_hausdorff:
             self.hausdorff = HausdorffMaskLoss()
         if use_momentum:
-            self.momentum = MomentumBoundaryLoss(lambda_p, clip_dt, momentum_target)
+            self.momentum = MomentumBoundaryLoss(lambda_p, clip_dt, momentum_mode,
+                                                 momentum_target, momentum_channels)
 
     def forward(self, logits, target, p=None):
         """logits: (B,1,H,W) binary or (B,C,H,W) multiclass.

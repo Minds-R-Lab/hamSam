@@ -22,18 +22,27 @@ def test_hausdorff_nonneg_and_grad():
     hd.backward(); assert torch.isfinite(logits.grad).all()
 
 
-def test_momentum_loss_targets():
+def test_momentum_loss_modes_and_targets():
     gt = _square(); p = torch.randn(2, 32, 16, 16, requires_grad=True)
-    for tgt in ('proximity', 'distance', 'band'):
-        loss = MomentumBoundaryLoss(target=tgt)(p, gt)
-        assert torch.isfinite(loss) and loss.item() >= 0
-    MomentumBoundaryLoss()(None, gt)   # tolerates p=None (baseline encoder)
+    for mode in ('projection', 'template'):
+        for tgt in ('proximity', 'distance', 'band'):
+            loss = MomentumBoundaryLoss(mode=mode, target=tgt,
+                                        momentum_channels=32)(p, gt)
+            assert torch.isfinite(loss) and loss.item() >= 0
+    # projection mode has a learned head; template mode does not
+    assert sum(x.numel() for x in
+               MomentumBoundaryLoss(mode='projection', momentum_channels=32).parameters()) > 0
+    assert sum(x.numel() for x in
+               MomentumBoundaryLoss(mode='template').parameters()) == 0
+    # tolerates p=None (baseline encoder, bottleneck='none')
+    assert float(MomentumBoundaryLoss(momentum_channels=32)(None, gt)) == 0.0
 
 
 def test_combined_backward_all_terms():
     gt = _square(); logits = (gt * 4 - 2).requires_grad_(True)
     p = torch.randn(2, 32, 16, 16, requires_grad=True)
-    loss, parts = CombinedLoss(use_hausdorff=True, use_momentum=True)(logits, gt, p)
+    loss, parts = CombinedLoss(use_hausdorff=True, use_momentum=True,
+                               momentum_channels=32)(logits, gt, p)
     loss.backward()
     assert {'ce', 'dice', 'hausdorff', 'momentum', 'total'} <= set(parts)
     assert torch.isfinite(logits.grad).all() and torch.isfinite(p.grad).all()

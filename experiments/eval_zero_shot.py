@@ -71,6 +71,7 @@ def main():
         dcfg = cfg["datasets"][name]
         mc, nc = dcfg.get("multiclass", False), dcfg.get("num_classes", 1)
         model = HamMedSAM(sam_checkpoint=mcfg.get("sam_checkpoint"),
+                          backend=mcfg.get("backend", "medsam_vitb"),
                           bottleneck=mcfg.get("bottleneck", "deepest"),
                           num_classes=nc, input_size=input_size).to(device)
         try:

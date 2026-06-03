@@ -59,7 +59,7 @@ def main():
     input_size = args.input_size or cfg["input_size"]
     epochs = args.epochs or tcfg["epochs"]
     batch_size = args.batch_size or tcfg["batch_size"]
-    data_root = args.data or cfg["data_root"]
+    data_root = args.data or cfg.get("data_root") or cfg.get("data_roots")
     multiclass = cfg.get("multiclass", False)
     num_classes = cfg.get("num_classes", 1)
 
@@ -71,6 +71,7 @@ def main():
     device = torch.device(args.device)
     model = HamMedSAM(
         sam_checkpoint=mcfg.get("sam_checkpoint"), model_type=mcfg.get("model_type", "vit_b"),
+        backend=mcfg.get("backend", "medsam_vitb"),
         bottleneck=bottleneck, ablation=mcfg.get("ablation", "none"),
         prompt_free=mcfg.get("prompt_free", False),
         use_pssp_decoder=mcfg.get("use_pssp_decoder", False),
@@ -79,7 +80,7 @@ def main():
     ).to(device)
 
     loss_fn = CombinedLoss(multiclass=multiclass, num_classes=num_classes,
-                           **LOSS_FLAGS[args.loss])
+                           **LOSS_FLAGS[args.loss]).to(device)
 
     train_loader = build_loader(data_root, "train", cfg, batch_size, True,
                                 input_size, multiclass, num_classes)
@@ -89,8 +90,10 @@ def main():
     except Exception:
         val_loader = train_loader  # synthetic / no val split
 
-    opt = AdamW([q for q in model.parameters() if q.requires_grad],
-                lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
+    # include loss params (the projection-mode momentum loss has a learned head)
+    train_params = [q for q in list(model.parameters()) + list(loss_fn.parameters())
+                    if q.requires_grad]
+    opt = AdamW(train_params, lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
     sched = CosineAnnealingLR(opt, T_max=epochs) if tcfg.get("cosine", True) else None
     use_amp = tcfg.get("amp", True) and device.type == "cuda"
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)

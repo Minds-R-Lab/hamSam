@@ -1,4 +1,6 @@
-# Cross-modality zero-shot eval (PLAN.md ext 6). HamSeg fully-supervised
+# Cross-modality zero-shot eval (PLAN.md ext 6). NOTE: these datasets are NOT
+# among VM-MedSAM's eight; they probe transfer to unseen domains
+# (ISIC = unseen modality, TN3K / ACDC = unseen organs).
 # references (HamVision Tables 2-3): ISIC2017 89.28, ISIC2018 90.32,
 # TN3K 87.39, ACDC 93.81 (Dice %).
 datasets:

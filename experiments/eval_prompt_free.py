@@ -43,6 +43,7 @@ def main():
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     mcfg = ckpt.get("config", {}).get("model", {})
     model = HamMedSAM(sam_checkpoint=mcfg.get("sam_checkpoint"),
+                      backend=mcfg.get("backend", "medsam_vitb"),
                       bottleneck=mcfg.get("bottleneck", "deepest"),
                       input_size=args.input_size).to(device)
     model.load_state_dict(ckpt["model"], strict=False)

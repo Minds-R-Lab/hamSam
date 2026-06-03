@@ -107,3 +107,31 @@ class SyntheticSegDataset(Dataset):
         box = box_from_mask(fg, 0, self.size)
         target = mask if self.multiclass else fg.unsqueeze(0)
         return {'image': img, 'mask': target, 'box': box}
+
+
+class MultiRootSegDataset(Dataset):
+    """Joint dataset over several roots (VM-MedSAM trains jointly on all eight).
+
+    Each root is a MedSegDataset; samples are concatenated. All datasets are
+    treated as binary box-promptable segmentation (the SAM paradigm), so they
+    compose regardless of how many organs the source has.
+    """
+
+    def __init__(self, roots, split='train', size=1024, normalize='none',
+                 box_perturb=20):
+        self.subsets, self.index = [], []
+        for name, root in (roots.items() if isinstance(roots, dict)
+                           else enumerate(roots)):
+            ds = MedSegDataset(root, split=split, size=size, normalize=normalize,
+                               box_perturb=box_perturb, multiclass=False,
+                               num_classes=1)
+            base = len(self.subsets)
+            self.subsets.append(ds)
+            self.index += [(base, i) for i in range(len(ds))]
+
+    def __len__(self):
+        return len(self.index)
+
+    def __getitem__(self, k):
+        s, i = self.index[k]
+        return self.subsets[s][i]

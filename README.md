@@ -13,8 +13,9 @@ that emits, at every spatial location, three structured maps:
 | `H_map` (energy) | parameter-free saliency | prompt-free bounding box |
 
 This gives three contributions over VM-MedSAM: an interpretable encoder, an
-**encoder-level momentum boundary loss** (vs. VM-MedSAM's post-hoc Hausdorff),
-and **prompt-free** inference (vs. a required user box).
+**encoder-level momentum boundary loss** (a learned head reads a boundary map
+out of the momentum `p`; vs. VM-MedSAM's post-hoc Hausdorff on the mask), and
+**prompt-free** inference (vs. a required user box).
 
 > Status: research code. The novel components and the full train/eval pipeline
 > run end-to-end and are unit-tested on CPU (see "What is tested"). Real
@@ -66,8 +67,18 @@ python experiments/eval_prompt_free.py --checkpoint outputs/ham/seed_42/best.ckp
 python experiments/eval_zero_shot.py   --checkpoint outputs/ham/seed_42/best.ckpt --prompt_mode auto --output_dir outputs/ham/seed_42/zs
 ```
 Set `model.sam_checkpoint` in the YAML to your MedSAM ViT-B `.pth`. Encoder
-placement is configurable: `--bottleneck {deepest,all,none}` (the plan asks for
-testing several; `none` is the baseline encoder).
+placement is configurable: `--bottleneck {deepest,all,none}` (`none` is the
+baseline encoder).
+
+**Datasets.** Uses VM-MedSAM's exact eight (BTCV, FLARE22, MSD Lung, BraTS,
+CVC-ClinicDB, BUSI, DRIVE, Montgomery), trained jointly via
+`configs/ham_medsam_vmdata.yaml`. ISIC/TN3K/ACDC are optional out-of-distribution
+zero-shot probes only (not in VM-MedSAM). See `data/README.md`.
+
+**Backend.** `model.backend=medsam_vitb` (SAM ViT-B) is the default and the
+only one wired, because VM-MedSAM uses it and its 256x64x64 embedding matches
+`HamEncoder`. `sam2`/`medsam2` (need multi-scale FPN features) and `sam3`
+(text/concept paradigm) are documented extension points that raise on use.
 
 ## What is tested (ran in CI/CPU)
 - `hamiltonian.py`: 4-direction reversal, reshape round-trip, sqrt(L) stability

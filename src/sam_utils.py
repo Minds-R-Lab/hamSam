@@ -50,14 +50,47 @@ class FallbackMaskDecoder(nn.Module):
                              mode='bilinear', align_corners=False)
 
 
-def build_sam_components(sam_checkpoint=None, model_type="vit_b", out_size=1024):
-    """Return (prompt_encoder, mask_decoder, kind). kind in {'sam','fallback'}."""
+# Why MedSAM ViT-B is the default backend (June 2026 review):
+#   * VM-MedSAM (the model we extend) uses SAM ViT-B; its image embedding is
+#     256x64x64, exactly what HamEncoder emits, so only the encoder is swapped
+#     and the comparison is apples-to-apples.
+#   * SAM 2 / MedSAM2 (Hiera + memory, 3D/video) need MULTI-SCALE FPN features
+#     in the mask decoder, not a single embedding -- HamEncoder would need an
+#     FPN-style multi-output head first. Different research thread.
+#   * SAM 3 / 3.1 (Nov 2025 / Mar 2026) is open-vocabulary *concept* (text)
+#     segmentation, a different paradigm from box-prompted single-structure
+#     MedSAM. Out of scope for this paper.
+# The sam2/medsam2/sam3 backends are documented extension points below.
+SUPPORTED_BACKENDS = ("medsam_vitb", "sam_vitb", "sam2", "medsam2", "sam3")
+
+
+def build_sam_components(sam_checkpoint=None, model_type="vit_b", out_size=1024,
+                         backend="medsam_vitb"):
+    """Return (prompt_encoder, mask_decoder, kind). kind in {'sam','fallback'}.
+
+    backend:
+        'medsam_vitb' / 'sam_vitb' -- official segment-anything ViT-B (default).
+        'sam2' / 'medsam2' / 'sam3' -- not wired yet; raise with the reason.
+    """
+    if backend in ("sam2", "medsam2"):
+        raise NotImplementedError(
+            f"backend='{backend}' is a documented extension point, not wired. "
+            "SAM2/MedSAM2 mask decoders consume multi-scale Hiera FPN features; "
+            "HamEncoder must expose an FPN-style multi-output head before this "
+            "backend can be used. Keep 'medsam_vitb' for the VM-MedSAM comparison.")
+    if backend == "sam3":
+        raise NotImplementedError(
+            "backend='sam3' (open-vocabulary concept/text segmentation) is a "
+            "different paradigm from box-prompted MedSAM; not applicable to this "
+            "model. A text-promptable Ham-MedSAM would be separate future work.")
     try:
         if sam_checkpoint is None:
             raise RuntimeError("no checkpoint provided")
         from segment_anything import sam_model_registry
         sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
         return sam.prompt_encoder, sam.mask_decoder, "sam"
+    except NotImplementedError:
+        raise
     except Exception as e:  # pragma: no cover - exercised only without the package
         warnings.warn(
             f"segment_anything unavailable or no checkpoint ({e}); using the "

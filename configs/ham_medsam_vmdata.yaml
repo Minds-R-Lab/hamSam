@@ -1,0 +1,35 @@
+# Ham-MedSAM trained JOINTLY on VM-MedSAM's exact eight datasets (Table 1),
+# binary box-promptable (SAM paradigm). This is the apples-to-apples setup for
+# comparing against VM-MedSAM across all reported modalities.
+data_roots:
+  btcv:         data/processed/btcv
+  flare22:      data/processed/flare22
+  msd_lung:     data/processed/msd_lung
+  brats:        data/processed/brats
+  cvc_clinicdb: data/processed/cvc_clinicdb
+  busi:         data/processed/busi
+  drive:        data/processed/drive
+  montgomery:   data/processed/montgomery
+input_size: 1024
+multiclass: false
+num_classes: 1
+normalize: none
+box_perturb: 20
+model:
+  bottleneck: deepest
+  ablation: none
+  prompt_free: false
+  use_pssp_decoder: false
+  multiclass_head: false
+  sam_checkpoint: null
+  backend: medsam_vitb
+  model_type: vit_b
+train:
+  epochs: 100
+  batch_size: 8
+  lr: 0.00005
+  weight_decay: 0.0001
+  cosine: true
+  amp: true
+  decoder_unfreeze_epoch: 10
+  val_interval: 1

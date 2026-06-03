@@ -48,6 +48,26 @@ the code:
    88.17). The zero-shot reference constants use the Tables 2-3 (deployment)
    numbers; state this when comparing.
 
+6. **Momentum loss redesigned (recommendation adopted).** Rather than match
+   raw |p| to a fixed template (which fights the paper's measured
+   interior>boundary>exterior structure of |p|), the default
+   `MomentumBoundaryLoss` mode is `projection`: a learned 1x1 conv reads a
+   boundary logit out of p, supervised (BCE + soft-Dice) against a soft
+   boundary band. Still encoder-level (gradients flow into p); the three
+   template variants remain available for ablation. The loss head's params
+   must be added to the optimiser (the training script does this).
+
+7. **Datasets switched to VM-MedSAM's exact eight** (Table 1: BTCV, FLARE22,
+   MSD Lung, BraTS, CVC-ClinicDB, BUSI, DRIVE, Montgomery), trained jointly,
+   binary box-promptable. ISIC/TN3K/ACDC are kept only as optional unseen-domain
+   zero-shot probes. See `configs/ham_medsam_vmdata.yaml` and `data/README.md`.
+
+8. **SAM backend = MedSAM ViT-B (default).** SAM 3/3.1 (Nov 2025/Mar 2026) is
+   open-vocabulary text/concept segmentation -- a different paradigm; SAM2/
+   MedSAM2 need multi-scale FPN features in the decoder. Both are documented
+   extension points (`src/sam_utils.py`) that raise on use; ViT-B keeps the
+   VM-MedSAM comparison clean.
+
 ---
 
 ## 1. What Li et al. (2026) did, and where it stops short

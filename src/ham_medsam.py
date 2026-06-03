@@ -70,7 +70,7 @@ class MultiClassEnergyHead(nn.Module):
 
 
 class HamMedSAM(nn.Module):
-    def __init__(self, sam_checkpoint=None, model_type="vit_b",
+    def __init__(self, sam_checkpoint=None, model_type="vit_b", backend="medsam_vitb",
                  bottleneck='deepest', ablation='none',
                  freeze_prompt_encoder=True, freeze_mask_decoder=False,
                  prompt_free=False, use_pssp_decoder=False,
@@ -83,7 +83,8 @@ class HamMedSAM(nn.Module):
         self.image_encoder = HamEncoder(bottleneck=bottleneck, ablation=ablation,
                                         input_size=input_size)
         self.prompt_encoder, self.mask_decoder, self.sam_kind = \
-            build_sam_components(sam_checkpoint, model_type, out_size=input_size)
+            build_sam_components(sam_checkpoint, model_type, out_size=input_size,
+                                 backend=backend)
 
         if freeze_prompt_encoder and self.prompt_encoder is not None:
             for q in self.prompt_encoder.parameters():
