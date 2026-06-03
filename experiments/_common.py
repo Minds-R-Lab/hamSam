@@ -41,3 +41,20 @@ LOSS_FLAGS = {
     "dice+ce+momentum": dict(use_hausdorff=False, use_momentum=True),
     "dice+ce+hausdorff+momentum": dict(use_hausdorff=True, use_momentum=True),
 }
+
+
+def amp_autocast(device_type, enabled):
+    """torch.amp.autocast across versions (avoids the deprecated cuda.amp API)."""
+    if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+        return torch.amp.autocast(device_type, enabled=enabled)
+    return torch.cuda.amp.autocast(enabled=enabled)  # pragma: no cover
+
+
+def make_grad_scaler(device_type, enabled):
+    """torch.amp.GradScaler across versions."""
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        try:
+            return torch.amp.GradScaler(device_type, enabled=enabled)
+        except TypeError:  # pragma: no cover
+            pass
+    return torch.cuda.amp.GradScaler(enabled=enabled)  # pragma: no cover

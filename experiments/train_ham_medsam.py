@@ -30,7 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.ham_medsam import HamMedSAM        # noqa: E402
 from src.losses import CombinedLoss          # noqa: E402
 from src.metrics import dice_score           # noqa: E402
-from experiments._common import set_seed, build_loader, LOSS_FLAGS  # noqa: E402
+from experiments._common import (set_seed, build_loader, LOSS_FLAGS,  # noqa: E402
+                                 amp_autocast, make_grad_scaler)
 
 
 def parse_args():
@@ -101,7 +102,7 @@ def main():
     opt = AdamW(train_params, lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
     sched = CosineAnnealingLR(opt, T_max=epochs) if tcfg.get("cosine", True) else None
     use_amp = tcfg.get("amp", True) and device.type == "cuda"
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = make_grad_scaler(device.type, use_amp)
 
     json.dump(vars(args) | {"bottleneck": bottleneck}, open(
         os.path.join(args.output_dir, "args.json"), "w"), indent=2)
@@ -116,7 +117,7 @@ def main():
             tgt = batch["mask"].to(device)
             box = batch["box"].to(device)
             opt.zero_grad()
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with amp_autocast(device.type, use_amp):
                 out = model(img, box=None if model.prompt_free else box)
                 target = tgt.squeeze(1) if multiclass else tgt
                 loss, parts = loss_fn(out["mask"], target, p=out["p"])
