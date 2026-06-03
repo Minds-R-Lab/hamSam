@@ -109,10 +109,18 @@ class HamMedSAM(nn.Module):
         if self.sam_kind == "sam":
             image_pe = self.prompt_encoder.get_dense_pe()
             sparse, dense = self.prompt_encoder(points=None, boxes=box, masks=None)
-            low_res, _ = self.mask_decoder(
-                image_embeddings=feat, image_pe=image_pe,
-                sparse_prompt_embeddings=sparse, dense_prompt_embeddings=dense,
-                multimask_output=False)
+            # SAM's mask decoder repeat-interleaves image embeddings by the
+            # number of prompt tokens, so batched-image training must call it
+            # per image (one image + its prompt at a time), then restack.
+            lows = []
+            for i in range(feat.shape[0]):
+                low_i, _ = self.mask_decoder(
+                    image_embeddings=feat[i:i + 1], image_pe=image_pe,
+                    sparse_prompt_embeddings=sparse[i:i + 1],
+                    dense_prompt_embeddings=dense[i:i + 1],
+                    multimask_output=False)
+                lows.append(low_i)
+            low_res = torch.cat(lows, 0)
             return F.interpolate(low_res, size=(self.input_size, self.input_size),
                                  mode='bilinear', align_corners=False)
         return self.mask_decoder(feat, box)        # fallback

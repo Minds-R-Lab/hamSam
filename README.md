@@ -17,9 +17,12 @@ This gives three contributions over VM-MedSAM: an interpretable encoder, an
 out of the momentum `p`; vs. VM-MedSAM's post-hoc Hausdorff on the mask), and
 **prompt-free** inference (vs. a required user box).
 
-> Status: research code. The novel components and the full train/eval pipeline
-> run end-to-end and are unit-tested on CPU (see "What is tested"). Real
-> benchmark numbers require a GPU, a MedSAM ViT-B checkpoint, and the datasets.
+> Status: research code. Every component -- including the REAL segment-anything
+> prompt encoder + mask decoder -- runs end-to-end and is unit-tested on CPU
+> (see "What is tested"). The real SAM decoder is built from scratch when no
+> checkpoint is given, so the full stack is turnkey without any download. Real
+> benchmark *numbers* still require a GPU, pretrained MedSAM/SAM ViT-B weights,
+> and the datasets.
 
 ## Layout
 ```
@@ -52,7 +55,19 @@ python experiments/train_ham_medsam.py --config configs/ham_medsam_abdomen.yaml 
 pytest tests/ -q
 ```
 
-### Real training (H100)
+### Turnkey setup + verification (H100)
+```bash
+bash scripts/setup_h100.sh           # deps + segment-anything + sanity import
+bash scripts/run_smoke.sh            # unit tests + real-SAM component smoke + e2e
+bash scripts/download_checkpoints.sh # optional: pretrained SAM/MedSAM ViT-B
+```
+`scripts/run_smoke.sh` runs `experiments/smoke_real.py`, which forwards AND
+backwards every config (box / prompt-free / PSSP / multiclass / all encoder
+placements) and every loss through the REAL SAM decoder, then a 1-epoch
+synthetic train + prompt-free eval. If it prints "ALL SMOKE CHECKS PASSED",
+the stack is ready.
+
+### Real training
 ```bash
 # Phase 0 baseline (pure-ConvNeXt encoder, VM-MedSAM-style):
 python experiments/train_ham_medsam.py --config configs/vm_medsam_baseline_abdomen.yaml \
@@ -88,13 +103,19 @@ only one wired, because VM-MedSAM uses it and its 256x64x64 embedding matches
 - `prompt_free.py`: box localisation + empty-energy fallback.
 - `ham_medsam.py`: forward+backward for all 6 configs (box / prompt-free / PSSP
   / multiclass / every-stage / baseline).
-- Full pipeline: train → checkpoint → prompt-free eval → zero-shot eval.
+- Real SAM path: `smoke_real.py` runs all 6 model configs + 4 losses through
+  the actual segment-anything PromptEncoder + MaskDecoder (forward+backward);
+  `tests/test_sam_real.py` adds 3 more (skipped only if the package is absent).
+- Full pipeline: train (freeze→unfreeze decoder) → checkpoint → prompt-free /
+  zero-shot eval.
 
 ## What is NOT verified here
-GPU/AMP paths, the real `segment_anything` decoder (a fallback stands in for
-CPU tests — never use it for reported metrics), dataset converters in
-`data/prepare_data.py` (need challenge access), and any accuracy claim. These
-are code-complete but unrun in this environment.
+The real `segment_anything` decoder path IS now exercised (from-scratch build,
+`smoke_real.py` + `tests/test_sam_real.py`). Still unverified in this
+environment: accuracy with *pretrained* MedSAM/SAM weights, GPU/AMP at full
+1024 resolution, the dataset converters in `data/prepare_data.py` (need
+challenge access), and any accuracy claim. The fallback conv decoder is only a
+last resort when segment-anything is absent — never use it for reported metrics.
 
 ## Notable correction
 `src/hamiltonian.py` fixes a bug in the upstream copy where two of the four

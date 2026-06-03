@@ -1,14 +1,18 @@
-"""SAM / MedSAM prompt-encoder + mask-decoder loading, with a CPU fallback.
+"""SAM / MedSAM prompt-encoder + mask-decoder loading, with three tiers.
 
-Real path (recommended for the H100 runs): install the official
-`segment-anything` package and pass a MedSAM (ViT-B) checkpoint. We then reuse
-SAM's PromptEncoder and MaskDecoder unchanged -- exactly as VM-MedSAM does --
-and only the image encoder is swapped for HamEncoder.
+Tiers (chosen automatically by build_sam_components):
+  1. 'sam' + checkpoint -- official segment-anything ViT-B with MedSAM/SAM
+     pretrained prompt encoder + mask decoder (input must be 1024). Use for
+     real H100 runs.
+  2. 'sam' from scratch -- real segment-anything PromptEncoder + MaskDecoder
+     built at image_embedding_size = input_size//16, RANDOM init, no download.
+     Exercises the true decoder code path on CPU at any resolution; turnkey for
+     smoke testing every component end-to-end.
+  3. 'fallback' -- a tiny box-conditioned conv decoder, only if segment-anything
+     is unavailable. NOT for reported metrics.
 
-Fallback path (no package / no checkpoint, e.g. CI smoke tests): a tiny
-box-conditioned conv decoder so the whole model is still runnable end-to-end on
-CPU. It is NOT a faithful SAM decoder and must not be used for reported numbers;
-build_sam_components() emits a clear warning when it falls back.
+Note: VM-MedSAM (and MedSAM) use SAM ViT-B; the image embedding is 256x64x64,
+which HamEncoder reproduces, so only the image encoder is swapped.
 """
 import warnings
 
@@ -16,9 +20,68 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+SUPPORTED_BACKENDS = ("medsam_vitb", "sam_vitb", "sam2", "medsam2", "sam3")
+SAM_EMBED_DIM = 256
+SAM_PATCH = 16  # 1024 input -> 64x64 embedding
+
+
+def ensure_sam_importable():
+    """Make `segment_anything.modeling` importable even if torchvision is broken.
+
+    segment_anything's package __init__ pulls in SamPredictor / the automatic
+    mask generator, which import torchvision -- neither is used by Ham-MedSAM.
+    On environments with a missing/mismatched torchvision we register minimal
+    stubs for exactly the symbols those modules import, so the *modeling*
+    classes (which need no torchvision) load. On a healthy install this is a
+    no-op.
+    """
+    try:
+        import torchvision  # noqa: F401
+        return
+    except Exception:
+        import sys
+        import types
+
+        def pkg(name):
+            m = types.ModuleType(name)
+            m.__path__ = []
+            sys.modules[name] = m
+            return m
+
+        def _unavailable(*a, **k):
+            raise RuntimeError("stubbed torchvision symbol is not available")
+
+        pkg("torchvision")
+        pkg("torchvision.transforms")
+        tf = pkg("torchvision.transforms.functional")
+        tf.resize = _unavailable
+        tf.to_pil_image = _unavailable
+        pkg("torchvision.ops")
+        ob = pkg("torchvision.ops.boxes")
+        ob.batched_nms = _unavailable
+        ob.box_area = _unavailable
+        sys.modules["torchvision.transforms"].functional = tf
+        sys.modules["torchvision.ops"].boxes = ob
+
+
+def _build_sam_from_scratch(out_size):
+    """Real segment-anything PromptEncoder + MaskDecoder, random init, no ckpt."""
+    ensure_sam_importable()
+    from segment_anything.modeling import (
+        PromptEncoder, MaskDecoder, TwoWayTransformer)
+    es = out_size // SAM_PATCH
+    prompt_encoder = PromptEncoder(
+        embed_dim=SAM_EMBED_DIM, image_embedding_size=(es, es),
+        input_image_size=(out_size, out_size), mask_in_chans=16)
+    mask_decoder = MaskDecoder(
+        num_multimask_outputs=3,
+        transformer=TwoWayTransformer(depth=2, embedding_dim=SAM_EMBED_DIM,
+                                      mlp_dim=2048, num_heads=8),
+        transformer_dim=SAM_EMBED_DIM, iou_head_depth=3, iou_head_hidden_dim=256)
+    return prompt_encoder, mask_decoder
+
 
 def _box_to_dense_mask(boxes, size, device):
-    """Rasterise (B,4) xyxy boxes (in `size` px) to a (B,1,size,size) mask."""
     B = boxes.shape[0]
     m = torch.zeros(B, 1, size, size, device=device)
     for b in range(B):
@@ -28,7 +91,7 @@ def _box_to_dense_mask(boxes, size, device):
 
 
 class FallbackMaskDecoder(nn.Module):
-    """Tiny stand-in: image embedding (B,256,64,64) + box -> mask (B,1,1024,1024)."""
+    """Tiny stand-in used only when segment-anything is unavailable."""
 
     def __init__(self, embed_dim=256, out_size=1024):
         super().__init__()
@@ -50,50 +113,37 @@ class FallbackMaskDecoder(nn.Module):
                              mode='bilinear', align_corners=False)
 
 
-# Why MedSAM ViT-B is the default backend (June 2026 review):
-#   * VM-MedSAM (the model we extend) uses SAM ViT-B; its image embedding is
-#     256x64x64, exactly what HamEncoder emits, so only the encoder is swapped
-#     and the comparison is apples-to-apples.
-#   * SAM 2 / MedSAM2 (Hiera + memory, 3D/video) need MULTI-SCALE FPN features
-#     in the mask decoder, not a single embedding -- HamEncoder would need an
-#     FPN-style multi-output head first. Different research thread.
-#   * SAM 3 / 3.1 (Nov 2025 / Mar 2026) is open-vocabulary *concept* (text)
-#     segmentation, a different paradigm from box-prompted single-structure
-#     MedSAM. Out of scope for this paper.
-# The sam2/medsam2/sam3 backends are documented extension points below.
-SUPPORTED_BACKENDS = ("medsam_vitb", "sam_vitb", "sam2", "medsam2", "sam3")
-
-
 def build_sam_components(sam_checkpoint=None, model_type="vit_b", out_size=1024,
                          backend="medsam_vitb"):
-    """Return (prompt_encoder, mask_decoder, kind). kind in {'sam','fallback'}.
-
-    backend:
-        'medsam_vitb' / 'sam_vitb' -- official segment-anything ViT-B (default).
-        'sam2' / 'medsam2' / 'sam3' -- not wired yet; raise with the reason.
-    """
+    """Return (prompt_encoder, mask_decoder, kind). kind in {'sam','fallback'}."""
     if backend in ("sam2", "medsam2"):
         raise NotImplementedError(
             f"backend='{backend}' is a documented extension point, not wired. "
             "SAM2/MedSAM2 mask decoders consume multi-scale Hiera FPN features; "
-            "HamEncoder must expose an FPN-style multi-output head before this "
-            "backend can be used. Keep 'medsam_vitb' for the VM-MedSAM comparison.")
+            "HamEncoder must expose an FPN-style multi-output head first.")
     if backend == "sam3":
         raise NotImplementedError(
             "backend='sam3' (open-vocabulary concept/text segmentation) is a "
-            "different paradigm from box-prompted MedSAM; not applicable to this "
-            "model. A text-promptable Ham-MedSAM would be separate future work.")
-    try:
-        if sam_checkpoint is None:
-            raise RuntimeError("no checkpoint provided")
+            "different paradigm from box-prompted MedSAM; not applicable here.")
+
+    # Tier 1: pretrained checkpoint via the registry (1024 input only).
+    if sam_checkpoint is not None:
+        if out_size != 1024:
+            raise ValueError(
+                "A SAM/MedSAM checkpoint expects 1024 input (64x64 embedding); "
+                f"got out_size={out_size}. Use input_size=1024 with a checkpoint, "
+                "or omit the checkpoint to build from scratch at this resolution.")
+        ensure_sam_importable()
         from segment_anything import sam_model_registry
         sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
         return sam.prompt_encoder, sam.mask_decoder, "sam"
-    except NotImplementedError:
-        raise
-    except Exception as e:  # pragma: no cover - exercised only without the package
+
+    # Tier 2: real SAM modules from scratch (random init, no download).
+    try:
+        pe, md = _build_sam_from_scratch(out_size)
+        return pe, md, "sam"
+    except Exception as e:  # pragma: no cover
         warnings.warn(
-            f"segment_anything unavailable or no checkpoint ({e}); using the "
-            "FallbackMaskDecoder. Do NOT use for reported metrics -- install "
-            "segment-anything and pass a MedSAM checkpoint for real runs.")
+            f"segment-anything unavailable ({e}); using FallbackMaskDecoder. "
+            "Install segment-anything for the real decoder path.")
         return None, FallbackMaskDecoder(out_size=out_size), "fallback"

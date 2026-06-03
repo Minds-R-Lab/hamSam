@@ -9,7 +9,10 @@ PyYAML>=6.0
 matplotlib>=3.7
 # SAM / MedSAM dependencies (only needed once the prompt encoder is wired in)
 opencv-python>=4.8
-# Optional: official segment-anything package for the frozen prompt encoder + mask decoder
-# segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
+# segment-anything provides the real prompt encoder + mask decoder.
+# Installed by scripts/setup_h100.sh (git) with a PyPI fallback:
+#   pip install git+https://github.com/facebookresearch/segment-anything.git
+#   pip install segment-anything-py   # fallback
+# Ham-MedSAM only imports segment_anything.modeling (no torchvision needed).
 Pillow>=9.5
 pytest>=7.4

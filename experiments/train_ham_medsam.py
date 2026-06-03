@@ -90,14 +90,18 @@ def main():
     except Exception:
         val_loader = train_loader  # synthetic / no val split
 
-    # include loss params (the projection-mode momentum loss has a learned head)
-    train_params = [q for q in list(model.parameters()) + list(loss_fn.parameters())
-                    if q.requires_grad]
+    # VM-MedSAM freezes the mask decoder for the first N epochs, then unfreezes.
+    unfreeze_ep = tcfg.get("decoder_unfreeze_epoch", 10)
+    if unfreeze_ep > 0:
+        model.set_mask_decoder_trainable(False)
+    # Optimiser holds ALL model+loss params (incl. the to-be-unfrozen decoder and
+    # the projection-mode momentum head). PyTorch skips params whose grad is None,
+    # so frozen params stay untouched until unfrozen mid-run.
+    train_params = list(model.parameters()) + list(loss_fn.parameters())
     opt = AdamW(train_params, lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
     sched = CosineAnnealingLR(opt, T_max=epochs) if tcfg.get("cosine", True) else None
     use_amp = tcfg.get("amp", True) and device.type == "cuda"
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-    unfreeze_ep = tcfg.get("decoder_unfreeze_epoch", 10)
 
     json.dump(vars(args) | {"bottleneck": bottleneck}, open(
         os.path.join(args.output_dir, "args.json"), "w"), indent=2)
