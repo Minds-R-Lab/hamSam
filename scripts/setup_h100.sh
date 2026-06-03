@@ -5,6 +5,7 @@ set -euo pipefail
 echo "[1/3] Python deps"
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+pip install nibabel   # NIfTI dataset converters
 
 echo "[2/3] segment-anything (real SAM prompt encoder + mask decoder)"
 # Official package (needs a matching torch/torchvision). Either works:

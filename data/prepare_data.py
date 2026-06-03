@@ -81,6 +81,35 @@ def _pair_files(images_dir, labels_dir):
     return pairs
 
 
+_IMG_DIR_NAMES = ("images", "imagestr", "imagests", "img", "imgs", "image")
+_LBL_DIR_NAMES = ("labels", "labelstr", "labelsts", "label", "lbl", "masks", "mask", "gt")
+
+
+def _has_nifti(d):
+    return bool(glob.glob(os.path.join(d, "*.nii")) or glob.glob(os.path.join(d, "*.nii.gz")))
+
+
+def autodetect_dirs(root):
+    """Find the images/labels subdirs under `root` (handles e.g. the FLARE22
+    zip's FLARE22Train/{images,labels} layout). Matches by directory name and
+    the presence of NIfTI files."""
+    img_dir = lbl_dir = None
+    for dirpath, _, _ in os.walk(root):
+        base = os.path.basename(dirpath).lower()
+        if not _has_nifti(dirpath):
+            continue
+        if img_dir is None and base in _IMG_DIR_NAMES:
+            img_dir = dirpath
+        elif lbl_dir is None and base in _LBL_DIR_NAMES:
+            lbl_dir = dirpath
+    if img_dir is None or lbl_dir is None:
+        raise FileNotFoundError(
+            f"could not autodetect images/labels dirs under {root}. "
+            f"Pass --images_dir and --labels_dir explicitly. "
+            f"(found images={img_dir}, labels={lbl_dir})")
+    return img_dir, lbl_dir
+
+
 def _window_ct(vol, lo, hi):
     vol = np.clip(vol, lo, hi)
     return ((vol - lo) / (hi - lo)).astype(np.float32)
@@ -88,7 +117,11 @@ def _window_ct(vol, lo, hi):
 
 def convert_nifti_dataset(images_dir, labels_dir, out_dir, label_map, hu_window,
                           split=(0.7, 0.1, 0.2), min_organ_px=20, seed=42):
-    import nibabel as nib
+    try:
+        import nibabel as nib
+    except ImportError as e:
+        raise SystemExit("nibabel is required for NIfTI conversion: "
+                         "`pip install nibabel` (or pip install -r requirements.txt)") from e
 
     pairs = _pair_files(images_dir, labels_dir)
     if not pairs:
@@ -141,8 +174,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dataset", required=True, choices=sorted(DATASETS))
-    ap.add_argument("--images_dir", required=True, help="dir of *.nii/.nii.gz CT volumes")
-    ap.add_argument("--labels_dir", required=True, help="dir of *.nii/.nii.gz label maps")
+    ap.add_argument("--root", default=None,
+                    help="raw dataset root; auto-detects images/labels subdirs "
+                         "(e.g. data/raw/flare22 -> FLARE22Train/{images,labels})")
+    ap.add_argument("--images_dir", default=None, help="dir of *.nii/.nii.gz CT volumes")
+    ap.add_argument("--labels_dir", default=None, help="dir of *.nii/.nii.gz label maps")
     ap.add_argument("--out", required=True, help="output root, e.g. data/processed/flare22")
     ap.add_argument("--min_organ_px", type=int, default=20)
     ap.add_argument("--label_map_json", default=None,
@@ -154,7 +190,13 @@ def main():
     label_map = cfg["labels"]
     if args.label_map_json:
         label_map = {int(k): v for k, v in json.load(open(args.label_map_json)).items()}
-    convert_nifti_dataset(args.images_dir, args.labels_dir, args.out, label_map,
+    images_dir, labels_dir = args.images_dir, args.labels_dir
+    if images_dir is None or labels_dir is None:
+        if args.root is None:
+            ap.error("provide either --root, or both --images_dir and --labels_dir")
+        images_dir, labels_dir = autodetect_dirs(args.root)
+        print(f"autodetected images={images_dir}  labels={labels_dir}")
+    convert_nifti_dataset(images_dir, labels_dir, args.out, label_map,
                           cfg["hu"], min_organ_px=args.min_organ_px, seed=args.seed)
 
 
