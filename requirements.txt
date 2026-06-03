@@ -1,0 +1,15 @@
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24
+scipy>=1.10
+scikit-image>=0.21
+einops>=0.7
+tqdm>=4.65
+PyYAML>=6.0
+matplotlib>=3.7
+# SAM / MedSAM dependencies (only needed once the prompt encoder is wired in)
+opencv-python>=4.8
+# Optional: official segment-anything package for the frozen prompt encoder + mask decoder
+# segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
+Pillow>=9.5
+pytest>=7.4

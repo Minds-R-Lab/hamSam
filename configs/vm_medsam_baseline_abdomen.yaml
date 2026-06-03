@@ -1,0 +1,24 @@
+# VM-MedSAM-style baseline: pure-ConvNeXt encoder (bottleneck=none), no
+# momentum/energy. Apples-to-apples reference for the encoder-swap ablation.
+data_root: data/processed/flare22
+dataset: flare22
+input_size: 1024
+multiclass: false
+num_classes: 1
+normalize: none
+box_perturb: 20
+model:
+  bottleneck: none
+  ablation: none
+  prompt_free: false
+  sam_checkpoint: null
+  model_type: vit_b
+train:
+  epochs: 100
+  batch_size: 8
+  lr: 0.00005
+  weight_decay: 0.0001
+  cosine: true
+  amp: true
+  decoder_unfreeze_epoch: 10
+  val_interval: 1

@@ -1,0 +1,21 @@
+# Papers (copyright / unpublished IP) -- never commit
+two_papers/
+*.pdf
+
+# Data, checkpoints, runs
+data/processed/
+data/raw/
+outputs/
+*.ckpt
+*.pth
+*.png
+!docs/*.png
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+.ipynb_checkpoints/

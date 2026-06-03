@@ -1,0 +1,9 @@
+# Cross-modality zero-shot eval (PLAN.md ext 6). HamSeg fully-supervised
+# references (HamVision Tables 2-3): ISIC2017 89.28, ISIC2018 90.32,
+# TN3K 87.39, ACDC 93.81 (Dice %).
+datasets:
+  isic2018: {root: data/processed/isic2018, multiclass: false, num_classes: 1}
+  tn3k:     {root: data/processed/tn3k,     multiclass: false, num_classes: 1}
+  acdc:     {root: data/processed/acdc,     multiclass: true,  num_classes: 4}
+input_size: 1024
+prompt_mode: auto          # auto (energy box) | box (GT-derived oracle)

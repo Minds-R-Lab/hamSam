@@ -1,0 +1,27 @@
+# Ham-MedSAM on abdomen CT (Phase 0-3 baseline protocol; mirrors VM-MedSAM).
+data_root: data/processed/flare22
+dataset: flare22
+input_size: 1024
+multiclass: false
+num_classes: 1
+normalize: none
+box_perturb: 20            # VM-MedSAM: 0-20 px random box perturbation
+
+model:
+  bottleneck: deepest      # deepest | all | none(=baseline)
+  ablation: none           # none | A | B
+  prompt_free: false
+  use_pssp_decoder: false
+  multiclass_head: false
+  sam_checkpoint: null      # path to MedSAM ViT-B checkpoint; null -> fallback
+  model_type: vit_b
+
+train:
+  epochs: 100
+  batch_size: 8
+  lr: 0.00005              # AdamW 5e-5 (PLAN.md s4)
+  weight_decay: 0.0001
+  cosine: true
+  amp: true
+  decoder_unfreeze_epoch: 10   # VM-MedSAM freezes the mask decoder for 10 epochs
+  val_interval: 1
