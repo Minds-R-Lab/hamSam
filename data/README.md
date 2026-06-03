@@ -35,11 +35,33 @@ plus **TN3K** (thyroid US) and **ACDC** (cardiac MRI) as unseen-organ probes.
 4. Normalise: `none` (default, [0,1]) or `imagenet`. For encoders trained from
    scratch, dataset statistics often beat ImageNet stats.
 
+## Getting the abdomen-CT data (BTCV + FLARE22) -- IMPLEMENTED
+
+`scripts/download_datasets.sh` documents and (for the open one) automates it:
+
+* **FLARE22** -- OPEN on Zenodo (record 7860267): 50 labeled abdomen CT + 13
+  organ labels. Downloaded with `zenodo_get`, no account needed.
+* **BTCV** -- GATED (Synapse syn3193805): free account + data-use agreement
+  required, then `synapseclient` with a personal access token.
+
+Convert the raw NIfTI to the training layout (per-organ binary 2D slices,
+abdomen soft-tissue window [-160, 240] HU, patient-level split):
+```
+python data/prepare_data.py --dataset flare22 \
+    --images_dir data/raw/flare22/images --labels_dir data/raw/flare22/labels \
+    --out data/processed/flare22
+```
+13-organ label conventions are built in (`FLARE22_LABELS`, `BTCV_LABELS`);
+**verify against your download's docs** and override with `--label_map_json`
+if the release uses a different order. (MSD-Lung / BraTS converters and the
+four 2D-image datasets are the next to add.)
+
 ## Layout produced by `prepare_data.py`
 
 ```
-data/processed/<dataset>/{train,val,test}/images/<id>.npy   # HxW or HxWx3
-data/processed/<dataset>/{train,val,test}/masks/<id>.npy    # HxW {0,1}
+data/processed/<dataset>/{train,val,test}/images/<pid>_z<zzz>_org<L>_<name>.npy  # HxW [0,1]
+data/processed/<dataset>/{train,val,test}/masks/ <pid>_z<zzz>_org<L>_<name>.npy  # HxW {0,1}
 ```
-Converters require challenge access and are stubbed with per-dataset
-instructions; multi-organ CT volumes are exploded into per-organ binary masks.
+Multi-organ CT volumes are exploded into per-organ binary masks (one sample =
+one organ on one slice), the SAM/MedSAM box-promptable paradigm. Splits are
+patient-level to avoid slice leakage.
