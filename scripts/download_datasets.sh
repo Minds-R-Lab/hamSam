@@ -31,6 +31,29 @@ cat <<'CMD'
       --out data/processed/btcv
 CMD
 echo
+echo "==================== MSD-Lung (Medical Decathlon Task06) ==============="
+echo "Open via http://medicaldecathlon.com (Task06_Lung.tar; also commonly on the"
+echo "MONAI AWS mirror). After extracting to data/raw/msd_lung/Task06_Lung:"
+cat <<'CMD'
+  python data/prepare_data.py --dataset msd_lung \
+      --images_dir data/raw/msd_lung/Task06_Lung/imagesTr \
+      --labels_dir data/raw/msd_lung/Task06_Lung/labelsTr \
+      --out data/processed/msd_lung
+CMD
+
+echo
+echo "==================== BraTS (use Medical Decathlon Task01) =============="
+echo "VM-MedSAM uses brain-tumour MRI (FLAIR). The simplest open source is MSD"
+echo "Task01_BrainTumour (4-D image; we take FLAIR=modality 0, whole tumour)."
+echo "Extract to data/raw/brats/Task01_BrainTumour, then:"
+cat <<'CMD'
+  python data/prepare_data.py --dataset brats \
+      --images_dir data/raw/brats/Task01_BrainTumour/imagesTr \
+      --labels_dir data/raw/brats/Task01_BrainTumour/labelsTr \
+      --out data/processed/brats
+CMD
+
+echo
 echo "Train on FLARE22 alone now:"
 echo "  python experiments/train_ham_medsam.py --config configs/ham_medsam_abdomen.yaml \\"
 echo "      --encoder ham --loss dice+ce+momentum --seed 42 --output_dir outputs/ham/seed_42 --device cuda"

@@ -36,7 +36,8 @@ def test_convert_patient_split_and_binary_masks():
                          os.path.join(ldir, f"FLARE22_Tr_{pid:04d}.nii.gz"))
         out = os.path.join(d, "proc")
         from data.prepare_data import FLARE22_LABELS
-        convert_nifti_dataset(idir, ldir, out, FLARE22_LABELS, (-160, 240),
+        convert_nifti_dataset(idir, ldir, out, FLARE22_LABELS,
+                              normalize="ct_window", hu=(-160, 240),
                               split=(0.6, 0.2, 0.2), min_organ_px=5, seed=0)
         import glob
         pid_of = lambda p: os.path.basename(p).split("_")[0]

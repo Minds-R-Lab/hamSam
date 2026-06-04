@@ -1,29 +1,36 @@
 """Dataset converters: raw NIfTI volumes -> Ham-MedSAM training layout.
 
-Currently implements the two abdomen-CT datasets used by VM-MedSAM (BTCV,
-FLARE22). Each volume is windowed, sliced axially, and EXPLODED into per-organ
-binary (image, mask) pairs -- the SAM/MedSAM box-promptable paradigm, where one
-sample = one organ instance on one slice. Splits are PATIENT-LEVEL (no slice
+Implements the FOUR volumetric VM-MedSAM datasets:
+  * btcv, flare22  -- abdomen CT, 13 organs -> per-organ binary 2D slices.
+  * msd_lung       -- chest CT, lung cancer (lung window) -> binary.
+  * brats          -- brain MRI (FLAIR), whole tumor -> binary.
+
+Each volume is normalised (CT HU window or MRI percentile), sliced axially, and
+written as binary (image, mask) pairs -- the SAM/MedSAM box-promptable paradigm
+(one sample = one structure on one slice). Splits are PATIENT-LEVEL (no slice
 leakage), matching VM-MedSAM.
 
 Output (read by data.datasets.MedSegDataset):
     <out>/<dataset>/{train,val,test}/images/<pid>_z<zzz>_org<L>_<name>.npy
     <out>/<dataset>/{train,val,test}/masks/ <pid>_z<zzz>_org<L>_<name>.npy
 
-ACCESS (see data/README.md):
-  * FLARE22 labeled set is openly downloadable from Zenodo (record 7860267).
-  * BTCV requires a Synapse account + data-use agreement (syn3193805).
-  Use scripts/download_datasets.sh.
+ACCESS (see data/README.md): FLARE22/MSD/BraTS have open mirrors; BTCV needs a
+Synapse account + DUA. Use scripts/download_datasets.sh.
 
-NOTE: label maps below follow the widely-used conventions; verify against the
-documentation shipped with YOUR download (label order has varied across
-re-releases). Pass --label_map_json to override.
+NOTES / verify against YOUR download:
+  * Label maps follow common conventions; override with --label_map_json.
+  * BraTS: MSD Task01 stores a 4-D image [FLAIR,T1w,T1gd,T2w]; we take FLAIR
+    (modality_index=0). If your BraTS ships separate *_flair.nii.gz, point
+    --images_dir at those (3-D) and it just works. Whole tumor = any nonzero
+    seg label.
+  * MSD-Lung: Task06 label 1 = tumour; lung window (-1000, 400) HU.
 """
 import argparse
 import glob
 import json
 import os
 import random
+import re
 
 import numpy as np
 
@@ -37,13 +44,18 @@ BTCV_LABELS = {1: "spleen", 2: "right_kidney", 3: "left_kidney",
                8: "aorta", 9: "ivc", 10: "portal_splenic_vein",
                11: "pancreas", 12: "right_adrenal", 13: "left_adrenal"}
 
+# normalize: 'ct_window' uses hu=(lo,hi); 'mri_percentile' clips to [p0.5,p99.5]
+# of nonzero voxels then min-max. merge_foreground collapses all nonzero labels
+# into one class named fg_name (for whole-tumor). modality_index picks a channel
+# from a 4-D image.
 DATASETS = {
-    "btcv":    dict(labels=BTCV_LABELS,    hu=(-160, 240)),
-    "flare22": dict(labels=FLARE22_LABELS, hu=(-160, 240)),
+    "btcv":    dict(labels=BTCV_LABELS,    normalize="ct_window", hu=(-160, 240)),
+    "flare22": dict(labels=FLARE22_LABELS, normalize="ct_window", hu=(-160, 240)),
+    "msd_lung": dict(labels={1: "lung_cancer"}, normalize="ct_window",
+                     hu=(-1000, 400), min_organ_px=5),
+    "brats":   dict(labels=None, normalize="mri_percentile", merge_foreground=True,
+                    fg_name="whole_tumor", modality_index=0, min_organ_px=20),
 }
-
-
-import re
 
 
 def _stem(name):
@@ -56,9 +68,7 @@ def _stem(name):
 
 def _patient_id(name, is_image):
     """Patient id = last digit-run of the stem. For images, first strip a
-    trailing _DDDD modality-channel suffix (nnU-Net/FLARE convention, e.g.
-    FLARE22_Tr_0001_0000 -> 0001), falling back to the full stem if that
-    leaves no digits. Avoids matching on dataset-name digits like 'FLARE22'."""
+    trailing _DDDD modality-channel suffix (nnU-Net/FLARE convention)."""
     stem = _stem(name)
     cand = re.sub(r"_\d{4}$", "", stem) if is_image else stem
     runs = re.findall(r"\d+", cand) or re.findall(r"\d+", stem)
@@ -66,7 +76,6 @@ def _patient_id(name, is_image):
 
 
 def _pair_files(images_dir, labels_dir):
-    """Pair image/label NIfTI files by patient id (channel-suffix aware)."""
     exts = ("*.nii", "*.nii.gz")
     imgs = sorted(sum([glob.glob(os.path.join(images_dir, e)) for e in exts], []))
     lbls = sorted(sum([glob.glob(os.path.join(labels_dir, e)) for e in exts], []))
@@ -90,9 +99,6 @@ def _has_nifti(d):
 
 
 def autodetect_dirs(root):
-    """Find the images/labels subdirs under `root` (handles e.g. the FLARE22
-    zip's FLARE22Train/{images,labels} layout). Matches by directory name and
-    the presence of NIfTI files."""
     img_dir = lbl_dir = None
     for dirpath, _, _ in os.walk(root):
         base = os.path.basename(dirpath).lower()
@@ -110,18 +116,33 @@ def autodetect_dirs(root):
     return img_dir, lbl_dir
 
 
-def _window_ct(vol, lo, hi):
-    vol = np.clip(vol, lo, hi)
-    return ((vol - lo) / (hi - lo)).astype(np.float32)
+def _normalize_volume(vol, mode, hu):
+    if mode == "ct_window":
+        lo, hi = hu
+        vol = np.clip(vol, lo, hi)
+        return ((vol - lo) / (hi - lo)).astype(np.float32)
+    if mode == "mri_percentile":
+        nz = vol[vol > 0]
+        if nz.size:
+            lo, hi = np.percentile(nz, [0.5, 99.5])
+        else:
+            lo, hi = float(vol.min()), float(vol.max())
+        if hi <= lo:
+            hi = lo + 1.0
+        vol = np.clip(vol, lo, hi)
+        return ((vol - lo) / (hi - lo)).astype(np.float32)
+    raise ValueError(f"unknown normalize mode {mode}")
 
 
-def convert_nifti_dataset(images_dir, labels_dir, out_dir, label_map, hu_window,
-                          split=(0.7, 0.1, 0.2), min_organ_px=20, seed=42):
+def convert_nifti_dataset(images_dir, labels_dir, out_dir, label_map,
+                          normalize="ct_window", hu=(-160, 240),
+                          merge_foreground=False, fg_name="lesion",
+                          modality_index=None, split=(0.7, 0.1, 0.2),
+                          min_organ_px=20, seed=42):
     try:
         import nibabel as nib
     except ImportError as e:
-        raise SystemExit("nibabel is required for NIfTI conversion: "
-                         "`pip install nibabel` (or pip install -r requirements.txt)") from e
+        raise SystemExit("nibabel is required: `pip install nibabel`") from e
 
     pairs = _pair_files(images_dir, labels_dir)
     if not pairs:
@@ -139,31 +160,39 @@ def convert_nifti_dataset(images_dir, labels_dir, out_dir, label_map, hu_window,
         for sub in ("images", "masks"):
             os.makedirs(os.path.join(out_dir, sp, sub), exist_ok=True)
 
-    lo, hi = hu_window
     counts = {"train": 0, "val": 0, "test": 0}
     for pid, img_path, lbl_path in pairs:
         sp = split_of[pid]
         img = nib.as_closest_canonical(nib.load(img_path)).get_fdata()
+        if img.ndim == 4:                              # 4-D (e.g. MSD BraTS): pick modality
+            mi = modality_index if modality_index is not None else 0
+            img = img[..., mi]
         lbl = nib.as_closest_canonical(nib.load(lbl_path)).get_fdata().astype(np.int16)
         if img.shape != lbl.shape:
             print(f"[skip] shape mismatch {pid}: {img.shape} vs {lbl.shape}")
             continue
-        img = _window_ct(img, lo, hi)
-        Z = img.shape[2]                              # axial = last axis (canonical)
+        img = _normalize_volume(img, normalize, hu)
+        Z = img.shape[2]
         for z in range(Z):
             sl_lbl = lbl[:, :, z]
-            present = [L for L in label_map if (sl_lbl == L).sum() >= min_organ_px]
+            if merge_foreground:
+                present = [1] if (sl_lbl > 0).sum() >= min_organ_px else []
+            else:
+                present = [L for L in label_map if (sl_lbl == L).sum() >= min_organ_px]
             if not present:
                 continue
-            sl_img = np.rot90(img[:, :, z])           # upright for viewing
+            sl_img = np.rot90(img[:, :, z])
             sl_lbl_r = np.rot90(sl_lbl)
             for L in present:
-                name = label_map[L]
+                if merge_foreground:
+                    name, mask = fg_name, (sl_lbl_r > 0)
+                else:
+                    name, mask = label_map[L], (sl_lbl_r == L)
                 base = f"{pid}_z{z:03d}_org{L}_{name}"
                 np.save(os.path.join(out_dir, sp, "images", base + ".npy"),
                         sl_img.astype(np.float32))
                 np.save(os.path.join(out_dir, sp, "masks", base + ".npy"),
-                        (sl_lbl_r == L).astype(np.uint8))
+                        mask.astype(np.uint8))
                 counts[sp] += 1
     print(f"done: {counts} samples across train/val/test (patients: "
           f"{n_tr}/{n_va}/{n - n_tr - n_va})")
@@ -175,19 +204,18 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dataset", required=True, choices=sorted(DATASETS))
     ap.add_argument("--root", default=None,
-                    help="raw dataset root; auto-detects images/labels subdirs "
-                         "(e.g. data/raw/flare22 -> FLARE22Train/{images,labels})")
-    ap.add_argument("--images_dir", default=None, help="dir of *.nii/.nii.gz CT volumes")
-    ap.add_argument("--labels_dir", default=None, help="dir of *.nii/.nii.gz label maps")
-    ap.add_argument("--out", required=True, help="output root, e.g. data/processed/flare22")
-    ap.add_argument("--min_organ_px", type=int, default=20)
+                    help="raw dataset root; auto-detects images/labels subdirs")
+    ap.add_argument("--images_dir", default=None)
+    ap.add_argument("--labels_dir", default=None)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--min_organ_px", type=int, default=None)
     ap.add_argument("--label_map_json", default=None,
                     help="optional JSON {int_label: name} overriding the default")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
     cfg = DATASETS[args.dataset]
-    label_map = cfg["labels"]
+    label_map = cfg.get("labels")
     if args.label_map_json:
         label_map = {int(k): v for k, v in json.load(open(args.label_map_json)).items()}
     images_dir, labels_dir = args.images_dir, args.labels_dir
@@ -196,8 +224,16 @@ def main():
             ap.error("provide either --root, or both --images_dir and --labels_dir")
         images_dir, labels_dir = autodetect_dirs(args.root)
         print(f"autodetected images={images_dir}  labels={labels_dir}")
-    convert_nifti_dataset(images_dir, labels_dir, args.out, label_map,
-                          cfg["hu"], min_organ_px=args.min_organ_px, seed=args.seed)
+
+    convert_nifti_dataset(
+        images_dir, labels_dir, args.out, label_map,
+        normalize=cfg.get("normalize", "ct_window"), hu=cfg.get("hu", (-160, 240)),
+        merge_foreground=cfg.get("merge_foreground", False),
+        fg_name=cfg.get("fg_name", "lesion"),
+        modality_index=cfg.get("modality_index"),
+        min_organ_px=args.min_organ_px if args.min_organ_px is not None
+        else cfg.get("min_organ_px", 20),
+        seed=args.seed)
 
 
 if __name__ == "__main__":

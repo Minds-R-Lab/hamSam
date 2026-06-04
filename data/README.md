@@ -53,8 +53,8 @@ python data/prepare_data.py --dataset flare22 \
 ```
 13-organ label conventions are built in (`FLARE22_LABELS`, `BTCV_LABELS`);
 **verify against your download's docs** and override with `--label_map_json`
-if the release uses a different order. (MSD-Lung / BraTS converters and the
-four 2D-image datasets are the next to add.)
+if the release uses a different order. MSD-Lung and BraTS converters are also implemented (CT lung window /
+MRI-FLAIR whole-tumour). The four 2D-image datasets are the next to add.
 
 ## Layout produced by `prepare_data.py`
 
