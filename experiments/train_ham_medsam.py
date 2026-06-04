@@ -44,6 +44,9 @@ def parse_args():
     p.add_argument("--output_dir", required=True)
     p.add_argument("--sam_checkpoint", default=None,
                    help="override model.sam_checkpoint (MedSAM/SAM ViT-B .pth; needs input 1024)")
+    p.add_argument("--early_stop_patience", type=int, default=None,
+                   help="stop if val Dice does not improve for N validations "
+                        "(uniform across runs; 0/None=off). Overrides config.")
     p.add_argument("--data", default=None, help="override data_root; 'synthetic' for smoke test")
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--batch_size", type=int, default=None)
@@ -119,7 +122,10 @@ def main():
     json.dump(vars(args) | {"bottleneck": bottleneck}, open(
         os.path.join(args.output_dir, "args.json"), "w"), indent=2)
 
+    patience = (args.early_stop_patience if args.early_stop_patience is not None
+                else tcfg.get("early_stop_patience", 0))
     best = -1.0
+    since_improve = 0
     for ep in range(epochs):
         if ep == unfreeze_ep:
             model.set_mask_decoder_trainable(True)
@@ -164,9 +170,16 @@ def main():
             print(f"epoch {ep+1}/{epochs}  loss={loss.item():.4f}  val_dice={vdice:.4f}{nf}")
             if vdice > best:
                 best = vdice
+                since_improve = 0
                 torch.save({"model": model.state_dict(), "epoch": ep, "val_dice": vdice,
                             "config": cfg, "args": vars(args)},
                            os.path.join(args.output_dir, "best.ckpt"))
+            else:
+                since_improve += 1
+                if patience and since_improve >= patience:
+                    print(f"early stop: no val improvement for {patience} validations "
+                          f"(best={best:.4f})")
+                    break
     print(f"done. best val_dice={best:.4f}  -> {args.output_dir}/best.ckpt")
 
 

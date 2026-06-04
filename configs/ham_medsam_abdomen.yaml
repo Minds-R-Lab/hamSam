@@ -26,3 +26,4 @@ train:
   decoder_unfreeze_epoch: 10   # VM-MedSAM freezes the mask decoder for 10 epochs
   val_interval: 1
   max_grad_norm: 1.0
+  early_stop_patience: 15   # stop if val Dice flat for 15 epochs (0=off)
