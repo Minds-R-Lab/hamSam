@@ -43,11 +43,25 @@ LOSS_FLAGS = {
 }
 
 
-def amp_autocast(device_type, enabled):
+def amp_autocast(device_type, enabled, dtype=None):
     """torch.amp.autocast across versions (avoids the deprecated cuda.amp API)."""
     if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+        if dtype is not None:
+            return torch.amp.autocast(device_type, enabled=enabled, dtype=dtype)
         return torch.amp.autocast(device_type, enabled=enabled)
     return torch.cuda.amp.autocast(enabled=enabled)  # pragma: no cover
+
+
+def pick_amp_dtype(device_type, enabled):
+    """Prefer bf16 on CUDA (fp32 exponent range -> no overflow in attention,
+    which is what NaNs fp16 finetuning of pretrained SAM decoders). Fall back to
+    fp16 only if bf16 is unsupported."""
+    if not enabled:
+        return None
+    if device_type == "cuda" and hasattr(torch.cuda, "is_bf16_supported") \
+            and torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
 
 
 def make_grad_scaler(device_type, enabled):

@@ -31,7 +31,7 @@ from src.ham_medsam import HamMedSAM        # noqa: E402
 from src.losses import CombinedLoss          # noqa: E402
 from src.metrics import dice_score           # noqa: E402
 from experiments._common import (set_seed, build_loader, LOSS_FLAGS,  # noqa: E402
-                                 amp_autocast, make_grad_scaler)
+                                 amp_autocast, make_grad_scaler, pick_amp_dtype)
 
 
 def parse_args():
@@ -106,7 +106,15 @@ def main():
     opt = AdamW(train_params, lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
     sched = CosineAnnealingLR(opt, T_max=epochs) if tcfg.get("cosine", True) else None
     use_amp = tcfg.get("amp", True) and device.type == "cuda"
-    scaler = make_grad_scaler(device.type, use_amp)
+    amp_dtype = pick_amp_dtype(device.type, use_amp)
+    # GradScaler is only needed for fp16 (bf16 has fp32 range and doesn't underflow).
+    use_scaler = use_amp and amp_dtype == torch.float16
+    scaler = make_grad_scaler(device.type, use_scaler)
+    max_grad_norm = tcfg.get("max_grad_norm", 1.0)
+    if use_amp:
+        print(f"AMP enabled with dtype={str(amp_dtype).split('.')[-1]} "
+              f"(grad scaler={'on' if use_scaler else 'off'}, clip={max_grad_norm})")
+    nonfinite = 0
 
     json.dump(vars(args) | {"bottleneck": bottleneck}, open(
         os.path.join(args.output_dir, "args.json"), "w"), indent=2)
@@ -121,11 +129,17 @@ def main():
             tgt = batch["mask"].to(device)
             box = batch["box"].to(device)
             opt.zero_grad()
-            with amp_autocast(device.type, use_amp):
+            with amp_autocast(device.type, use_amp, amp_dtype):
                 out = model(img, box=None if model.prompt_free else box)
                 target = tgt.squeeze(1) if multiclass else tgt
                 loss, parts = loss_fn(out["mask"], target, p=out["p"])
+            if not torch.isfinite(loss):       # guard: skip a bad batch
+                nonfinite += 1
+                continue
             scaler.scale(loss).backward()
+            if max_grad_norm and max_grad_norm > 0:
+                scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_norm_(train_params, max_grad_norm)
             scaler.step(opt); scaler.update()
         if sched:
             sched.step()
@@ -146,7 +160,8 @@ def main():
                     for b in range(img.shape[0]):
                         dices.append(dice_score(pred[b], gt[b]))
             vdice = sum(dices) / len(dices)
-            print(f"epoch {ep+1}/{epochs}  loss={loss.item():.4f}  val_dice={vdice:.4f}")
+            nf = f"  nonfinite_batches={nonfinite}" if nonfinite else ""
+            print(f"epoch {ep+1}/{epochs}  loss={loss.item():.4f}  val_dice={vdice:.4f}{nf}")
             if vdice > best:
                 best = vdice
                 torch.save({"model": model.state_dict(), "epoch": ep, "val_dice": vdice,
