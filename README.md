@@ -129,6 +129,25 @@ only one wired, because VM-MedSAM uses it and its 256x64x64 embedding matches
 `HamEncoder`. `sam2`/`medsam2` (need multi-scale FPN features) and `sam3`
 (text/concept paradigm) are documented extension points that raise on use.
 
+## Evaluate + the comparison runs that make the paper
+
+After a run finishes, get the per-organ breakdown on the held-out TEST split
+(not just the pooled val number):
+```bash
+python experiments/eval_test.py --checkpoint outputs/ham/seed_42/best.ckpt \
+    --data data/processed/flare22 --device cuda           # add --prompt_mode auto for prompt-free
+```
+The scientifically essential comparisons (run each at input 1024, ideally with
+`model.sam_checkpoint` set to MedSAM/SAM ViT-B weights):
+1. **Encoder ablation** -- Ham vs plain-ConvNeXt baseline, identical settings:
+   `--encoder ham --bottleneck deepest`  vs  `--encoder baseline` (bottleneck=none).
+2. **Loss ablation** -- `--loss dice+ce+hausdorff` (VM-MedSAM-style) vs
+   `--loss dice+ce+momentum` (ours) vs `dice+ce`.
+3. **Prompt-free** -- `eval_test.py --prompt_mode auto` vs `box`.
+A random-init SAM decoder (no checkpoint) trains to a sane ~0.89 pooled val
+Dice on FLARE22, but is a sanity baseline only -- set the checkpoint for
+reportable numbers.
+
 ## What is tested (ran in CI/CPU)
 - `hamiltonian.py`: 4-direction reversal, reshape round-trip, sqrt(L) stability
   to L=512, ablation shapes, differentiability.

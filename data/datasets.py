@@ -71,7 +71,8 @@ class MedSegDataset(Dataset):
             target = mask.long()
         else:
             target = fg.unsqueeze(0)
-        return {'image': img, 'mask': target, 'box': box}
+        name = os.path.splitext(os.path.basename(ipath))[0]
+        return {'image': img, 'mask': target, 'box': box, 'name': name}
 
 
 class SyntheticSegDataset(Dataset):
@@ -106,7 +107,7 @@ class SyntheticSegDataset(Dataset):
         fg = (mask > 0).float()
         box = box_from_mask(fg, 0, self.size)
         target = mask if self.multiclass else fg.unsqueeze(0)
-        return {'image': img, 'mask': target, 'box': box}
+        return {'image': img, 'mask': target, 'box': box, 'name': f'synth_{i:04d}'}
 
 
 class MultiRootSegDataset(Dataset):
