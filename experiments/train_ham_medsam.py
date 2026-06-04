@@ -42,6 +42,8 @@ def parse_args():
     p.add_argument("--loss", default="dice+ce", choices=list(LOSS_FLAGS))
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output_dir", required=True)
+    p.add_argument("--sam_checkpoint", default=None,
+                   help="override model.sam_checkpoint (MedSAM/SAM ViT-B .pth; needs input 1024)")
     p.add_argument("--data", default=None, help="override data_root; 'synthetic' for smoke test")
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--batch_size", type=int, default=None)
@@ -65,6 +67,8 @@ def main():
     num_classes = cfg.get("num_classes", 1)
 
     # encoder flag -> bottleneck placement
+    if args.sam_checkpoint is not None:
+        mcfg["sam_checkpoint"] = args.sam_checkpoint   # persisted via saved cfg
     bottleneck = args.bottleneck or mcfg["bottleneck"]
     if args.encoder in ("baseline", "rvm_plus"):
         bottleneck = "none"

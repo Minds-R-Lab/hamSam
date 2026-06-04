@@ -144,7 +144,14 @@ The scientifically essential comparisons (run each at input 1024, ideally with
 2. **Loss ablation** -- `--loss dice+ce+hausdorff` (VM-MedSAM-style) vs
    `--loss dice+ce+momentum` (ours) vs `dice+ce`.
 3. **Prompt-free** -- `eval_test.py --prompt_mode auto` vs `box`.
-A random-init SAM decoder (no checkpoint) trains to a sane ~0.89 pooled val
+Run the whole matrix in one command and collect a table:
+```bash
+DATA=data/processed/flare22 CKPT=checkpoints/sam_vit_b_01ec64.pth SEEDS="42 43 44" \
+  bash scripts/run_ablations.sh          # DRY_RUN=1 to preview the matrix first
+python experiments/collect_results.py --root outputs/ablation --out outputs/ablation/summary --per_organ
+```
+Pass `--sam_checkpoint` to training (or `CKPT=` to the script) to use pretrained
+weights without editing YAML. A random-init SAM decoder (no checkpoint) trains to a sane ~0.89 pooled val
 Dice on FLARE22, but is a sanity baseline only -- set the checkpoint for
 reportable numbers.
 
