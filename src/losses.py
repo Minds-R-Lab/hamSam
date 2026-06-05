@@ -73,14 +73,25 @@ class HausdorffMaskLoss(nn.Module):
     only -- the standard Karimi formulation.
     """
 
-    def __init__(self, alpha: float = 2.0, from_logits: bool = True):
+    def __init__(self, alpha: float = 2.0, from_logits: bool = True,
+                 edt_size: int = 256):
         super().__init__()
         self.alpha = alpha
         self.from_logits = from_logits
+        # SciPy EDT cost ~ H*W; computing it at 256 instead of 1024 is ~16x
+        # cheaper. The distance-weighting is a smooth regulariser, so the
+        # coarser grid is fine. edt_size=0 keeps full resolution.
+        self.edt_size = edt_size
 
     def forward(self, pred, target):
         p = torch.sigmoid(pred) if self.from_logits else pred
         g = target.float()
+        if self.edt_size and p.shape[-1] > self.edt_size:
+            import torch.nn.functional as _F
+            p = _F.interpolate(p, size=(self.edt_size, self.edt_size),
+                               mode="bilinear", align_corners=False)
+            g = _F.interpolate(g, size=(self.edt_size, self.edt_size),
+                               mode="nearest")
         with torch.no_grad():
             p_bin = (p > 0.5).float().cpu().numpy()
             g_bin = (g > 0.5).float().cpu().numpy()

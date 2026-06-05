@@ -18,7 +18,7 @@ def set_seed(seed):
 
 
 def build_loader(data_root, split, cfg, batch_size, shuffle, input_size,
-                 multiclass, num_classes):
+                 multiclass, num_classes, num_workers=None):
     if data_root == "synthetic":
         ds = SyntheticSegDataset(n=batch_size * 2, size=input_size,
                                  multiclass=multiclass, num_classes=num_classes,
@@ -32,7 +32,10 @@ def build_loader(data_root, split, cfg, batch_size, shuffle, input_size,
                            normalize=cfg.get("normalize", "none"),
                            box_perturb=cfg.get("box_perturb", 20),
                            multiclass=multiclass, num_classes=num_classes)
-    return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, num_workers=0)
+    nw = num_workers if num_workers is not None else cfg.get("num_workers", 8)
+    return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, num_workers=nw,
+                      pin_memory=True, persistent_workers=(nw > 0),
+                      prefetch_factor=(4 if nw > 0 else None))
 
 
 LOSS_FLAGS = {
