@@ -6,6 +6,7 @@
 #   SEEDS="42 43 44" bash scripts/run_ablations.sh
 #
 #   DRY_RUN=1 bash scripts/run_ablations.sh     # just print the matrix
+#   (re-running RESUMES: cells with results are skipped; FORCE=1 redoes them)
 set -euo pipefail
 
 DATA=${DATA:-data/processed/flare22}
@@ -36,6 +37,10 @@ for enc in $ENCODERS; do
       out="$ROOT/${enc}_${loss//+/-}_seed${seed}"
       echo "=== enc=$enc bottleneck=$bn loss=$loss seed=$seed -> $out ==="
       [ "$DRY_RUN" = 1 ] && continue
+      first_pm=$(echo $PROMPT_MODES | awk '{print $1}')
+      if [ -f "$out/eval_${first_pm}/test_per_organ.json" ] && [ "${FORCE:-0}" != 1 ]; then
+        echo "[skip] already complete (FORCE=1 to redo): $out"; continue
+      fi
       python experiments/train_ham_medsam.py --config "$CONFIG" --data "$DATA" \
         --encoder "$enc" --bottleneck "$bn" --loss "$loss" --seed "$seed" \
         --epochs "$EPOCHS" --batch_size "$BATCH" --input_size "$INPUT" \
