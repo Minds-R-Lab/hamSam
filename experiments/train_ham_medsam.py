@@ -47,6 +47,9 @@ def parse_args():
     p.add_argument("--early_stop_patience", type=int, default=None,
                    help="stop if val Dice does not improve for N validations "
                         "(uniform across runs; 0/None=off). Overrides config.")
+    p.add_argument("--prompt_free", action="store_true",
+                   help="train prompt-free: the model derives its box from its own "
+                        "energy map each step (use only on SINGLE-TARGET data).")
     p.add_argument("--data", default=None, help="override data_root; 'synthetic' for smoke test")
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--batch_size", type=int, default=None)
@@ -72,6 +75,8 @@ def main():
     # encoder flag -> bottleneck placement
     if args.sam_checkpoint is not None:
         mcfg["sam_checkpoint"] = args.sam_checkpoint   # persisted via saved cfg
+    if args.prompt_free:
+        mcfg["prompt_free"] = True
     bottleneck = args.bottleneck or mcfg["bottleneck"]
     if args.encoder in ("baseline", "rvm_plus"):
         bottleneck = "none"

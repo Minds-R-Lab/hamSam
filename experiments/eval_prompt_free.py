@@ -34,10 +34,9 @@ def main():
     ap.add_argument("--data", required=True, help="data root or 'synthetic'")
     ap.add_argument("--input_size", type=int, default=1024)
     ap.add_argument("--quantile", type=float, default=0.80)
-    ap.add_argument("--output_dir", required=True)
+    ap.add_argument("--output_dir", default=None)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
-    os.makedirs(args.output_dir, exist_ok=True)
     device = torch.device(args.device)
 
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
@@ -70,7 +69,9 @@ def main():
     summary["dice_drop_pp"] = round((summary["box"] - summary["auto"]) * 100, 2)
     print(f"box dice={summary['box']:.4f}  auto dice={summary['auto']:.4f}  "
           f"drop={summary['dice_drop_pp']}pp  auto/GT box IoU={summary['box_iou']:.3f}")
-    json.dump(summary, open(os.path.join(args.output_dir, "prompt_free.json"), "w"), indent=2)
+    if args.output_dir:
+        os.makedirs(args.output_dir, exist_ok=True)
+        json.dump(summary, open(os.path.join(args.output_dir, "prompt_free.json"), "w"), indent=2)
 
 
 if __name__ == "__main__":
