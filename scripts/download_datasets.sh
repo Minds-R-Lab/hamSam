@@ -57,8 +57,25 @@ echo
 echo "============ Kvasir-SEG (polyp) -- EASIEST single-target, one zip ======"
 if [ ! -d data/raw/kvasir-seg/Kvasir-SEG ]; then
   mkdir -p data/raw/kvasir-seg
-  wget -O data/raw/kvasir-seg/kvasir-seg.zip https://datasets.simula.no/downloads/kvasir-seg.zip
-  unzip -n -d data/raw/kvasir-seg data/raw/kvasir-seg/kvasir-seg.zip
+  KURL=https://datasets.simula.no/downloads/kvasir-seg.zip
+  KZIP=data/raw/kvasir-seg/kvasir-seg.zip
+  # Secure first: use Python's up-to-date CA bundle (fixes most "unknown issuer").
+  CA=$(python3 -c "import certifi; print(certifi.where())" 2>/dev/null || true)
+  if ! wget ${CA:+--ca-certificate="$CA"} -O "$KZIP" "$KURL"; then
+    if [ "${INSECURE_TLS:-0}" = 1 ]; then
+      echo "[warn] TLS verification failed; retrying WITHOUT cert check (INSECURE_TLS=1)."
+      wget --no-check-certificate -O "$KZIP" "$KURL"
+    else
+      echo "[error] Secure download of Kvasir-SEG failed (Simula TLS chain). Options:"
+      echo "   1) pip install -U certifi   then re-run (recommended)"
+      echo "   2) INSECURE_TLS=1 bash scripts/download_datasets.sh   (skips TLS verify; only if you trust the network)"
+      echo "   3) Use CVC-ClinicDB via HuggingFace instead (trusted cert, also single-target polyp):"
+      echo "        pip install huggingface_hub && huggingface-cli download Angelou0516/CVC-ClinicDB --repo-type dataset --local-dir data/raw/cvc"
+      echo "   4) Zero-download alternative: liver from FLARE22 (see README)."
+      exit 1
+    fi
+  fi
+  unzip -n -d data/raw/kvasir-seg "$KZIP"
 fi
 python data/prepare_data.py --dataset kvasir_seg \
     --images_dir data/raw/kvasir-seg/Kvasir-SEG/images \
