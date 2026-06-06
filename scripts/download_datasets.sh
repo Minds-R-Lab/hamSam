@@ -54,6 +54,19 @@ cat <<'CMD'
 CMD
 
 echo
+echo "============ Kvasir-SEG (polyp) -- EASIEST single-target, one zip ======"
+if [ ! -d data/raw/kvasir-seg/Kvasir-SEG ]; then
+  mkdir -p data/raw/kvasir-seg
+  wget -O data/raw/kvasir-seg/kvasir-seg.zip https://datasets.simula.no/downloads/kvasir-seg.zip
+  unzip -n -d data/raw/kvasir-seg data/raw/kvasir-seg/kvasir-seg.zip
+fi
+python data/prepare_data.py --dataset kvasir_seg \
+    --images_dir data/raw/kvasir-seg/Kvasir-SEG/images \
+    --labels_dir data/raw/kvasir-seg/Kvasir-SEG \
+    --out data/processed/kvasir_seg
+echo "Kvasir-SEG ready at data/processed/kvasir_seg (single-target polyp)."
+
+echo
 echo "============ 2-D single-target sets (ideal for prompt-free) ==========="
 echo "Download each, arrange as <root>/images + mask dir(s), then convert:"
 cat <<'CMD'

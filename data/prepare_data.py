@@ -211,6 +211,8 @@ def convert_nifti_dataset(images_dir, labels_dir, out_dir, label_map,
 DATASETS_2D = {
     "cvc_clinicdb": dict(name="polyp",        mask_subdirs=["masks"],
                          pair_by="stem", thresh=0),
+    "kvasir_seg":   dict(name="polyp",        mask_subdirs=["masks"],
+                         pair_by="stem", thresh=127),   # JPG masks 0/255
     "busi":         dict(name="breast_tumor", mask_subdirs=["masks"],
                          pair_by="stem", mask_suffix="_mask", thresh=127),
     "drive":        dict(name="vessel",       mask_subdirs=["masks"],
