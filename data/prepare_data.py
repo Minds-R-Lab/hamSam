@@ -199,10 +199,115 @@ def convert_nifti_dataset(images_dir, labels_dir, out_dir, label_map,
     return counts
 
 
+
+
+# --------------------------------------------------------------------------- #
+# 2-D image datasets (single-target -> ideal prompt-free testbeds)
+# --------------------------------------------------------------------------- #
+# pair_by: 'stem' (image stem == mask stem, after stripping mask_suffix) or
+# 'id' (match on the trailing digit-run, for DRIVE's 21_training / 21_manual1).
+# mask_subdirs: list -> OR-merge (Montgomery left+right lung). binarize: pixels
+# > thresh are foreground. VERIFY these against your actual download layout.
+DATASETS_2D = {
+    "cvc_clinicdb": dict(name="polyp",        mask_subdirs=["masks"],
+                         pair_by="stem", thresh=0),
+    "busi":         dict(name="breast_tumor", mask_subdirs=["masks"],
+                         pair_by="stem", mask_suffix="_mask", thresh=127),
+    "drive":        dict(name="vessel",       mask_subdirs=["masks"],
+                         pair_by="id", thresh=0),
+    "montgomery":   dict(name="lung",         mask_subdirs=["leftMask", "rightMask"],
+                         pair_by="stem", thresh=0),
+}
+
+_IMG_EXTS = ("*.png", "*.jpg", "*.jpeg", "*.tif", "*.tiff", "*.bmp", "*.gif")
+
+
+def _list_images(d):
+    return sorted(sum([glob.glob(os.path.join(d, e)) for e in _IMG_EXTS], []))
+
+
+def _id_of(path):
+    runs = re.findall(r"\d+", os.path.splitext(os.path.basename(path))[0])
+    return (runs[-1].lstrip("0") or "0") if runs else os.path.basename(path)
+
+
+def _find_masks(img_path, mask_dirs, pair_by, mask_suffix):
+    """Return matching mask paths (one per mask_dir) for an image."""
+    istem = os.path.splitext(os.path.basename(img_path))[0]
+    iid = _id_of(img_path)
+    found = []
+    for md in mask_dirs:
+        hit = None
+        for m in _list_images(md):
+            mstem = os.path.splitext(os.path.basename(m))[0]
+            if mask_suffix:
+                mstem = mstem.replace(mask_suffix, "")
+            if (pair_by == "stem" and mstem == istem) or \
+               (pair_by == "id" and _id_of(m) == iid):
+                hit = m
+                break
+        if hit:
+            found.append(hit)
+    return found
+
+
+def convert_image_dataset(images_dir, mask_root, out_dir, name,
+                          mask_subdirs=("masks",), pair_by="stem",
+                          mask_suffix=None, thresh=0, split=(0.7, 0.1, 0.2),
+                          seed=42):
+    """2-D image/mask pairs -> training layout. Image-level split (no patient
+    grouping). Multiple mask_subdirs are OR-merged (e.g. Montgomery L/R lung).
+    Saved as <stem>_org1_<name>.npy so eval groups them as one target."""
+    try:
+        from PIL import Image
+    except ImportError as e:
+        raise SystemExit("Pillow is required: `pip install Pillow`") from e
+
+    imgs = _list_images(images_dir)
+    if not imgs:
+        raise FileNotFoundError(f"no images under {images_dir}")
+    mask_dirs = [os.path.join(mask_root, sd) for sd in mask_subdirs]
+    rng = random.Random(seed)
+    rng.shuffle(imgs)
+    n = len(imgs)
+    n_tr, n_va = int(n * split[0]), int(n * split[1])
+    for sp in ("train", "val", "test"):
+        for sub in ("images", "masks"):
+            os.makedirs(os.path.join(out_dir, sp, sub), exist_ok=True)
+
+    counts = {"train": 0, "val": 0, "test": 0}
+    for i, ip in enumerate(imgs):
+        sp = "train" if i < n_tr else ("val" if i < n_tr + n_va else "test")
+        masks = _find_masks(ip, mask_dirs, pair_by, mask_suffix)
+        if not masks:
+            print(f"[skip] no mask for {os.path.basename(ip)}")
+            continue
+        img = np.array(Image.open(ip).convert("RGB"))
+        merged = None
+        for mp in masks:
+            m = np.array(Image.open(mp).convert("L"))
+            merged = m if merged is None else np.maximum(merged, m)
+        if merged.shape != img.shape[:2]:
+            from PIL import Image as _I
+            merged = np.array(_I.fromarray(merged).resize(
+                (img.shape[1], img.shape[0]), _I.NEAREST))
+        fg = (merged > thresh).astype(np.uint8)
+        if fg.sum() == 0:
+            continue
+        stem = os.path.splitext(os.path.basename(ip))[0].replace(" ", "_")
+        base = f"{stem}_org1_{name}"
+        np.save(os.path.join(out_dir, sp, "images", base + ".npy"), img.astype(np.uint8))
+        np.save(os.path.join(out_dir, sp, "masks", base + ".npy"), fg)
+        counts[sp] += 1
+    print(f"done: {counts} samples across train/val/test ({n} images)")
+    return counts
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dataset", required=True, choices=sorted(DATASETS))
+    ap.add_argument("--dataset", required=True,
+                    choices=sorted(DATASETS) + sorted(DATASETS_2D))
     ap.add_argument("--root", default=None,
                     help="raw dataset root; auto-detects images/labels subdirs")
     ap.add_argument("--images_dir", default=None)
@@ -214,6 +319,17 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
+    if args.dataset in DATASETS_2D:
+        c = DATASETS_2D[args.dataset]
+        mask_root = args.labels_dir or args.root or args.images_dir
+        img_dir = args.images_dir or (os.path.join(args.root, "images") if args.root else None)
+        if img_dir is None:
+            ap.error("2D dataset: provide --images_dir (and --labels_dir as mask root) or --root")
+        convert_image_dataset(img_dir, mask_root, args.out, c["name"],
+                              mask_subdirs=c["mask_subdirs"], pair_by=c["pair_by"],
+                              mask_suffix=c.get("mask_suffix"), thresh=c["thresh"],
+                              seed=args.seed)
+        return
     cfg = DATASETS[args.dataset]
     label_map = cfg.get("labels")
     if args.label_map_json:

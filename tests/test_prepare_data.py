@@ -53,6 +53,27 @@ def test_convert_patient_split_and_binary_masks():
         assert 0.0 <= im.min() and im.max() <= 1.0
 
 
+def test_convert_image_dataset_2d():
+    pytest.importorskip("PIL")
+    from PIL import Image
+    from data.prepare_data import convert_image_dataset
+    with tempfile.TemporaryDirectory() as d:
+        idir = os.path.join(d, "images"); mdir = os.path.join(d, "masks")
+        os.makedirs(idir); os.makedirs(mdir)
+        for i in range(6):
+            Image.fromarray((np.random.rand(32, 40, 3) * 255).astype(np.uint8)).save(f"{idir}/{i}.png")
+            m = np.zeros((32, 40), np.uint8); m[8:20, 10:28] = 255
+            Image.fromarray(m).save(f"{mdir}/{i}.png")
+        out = os.path.join(d, "out")
+        convert_image_dataset(idir, d, out, "polyp", mask_subdirs=["masks"],
+                              pair_by="stem", thresh=0, seed=0)
+        import glob
+        fi = glob.glob(f"{out}/*/images/*.npy"); mi = glob.glob(f"{out}/*/masks/*.npy")
+        assert len(fi) == 6 and len(mi) == 6
+        assert "_org1_polyp" in os.path.basename(fi[0])
+        assert set(np.unique(np.load(mi[0]))).issubset({0, 1})
+
+
 if __name__ == "__main__":
     for k, v in sorted(globals().items()):
         if k.startswith("test_"): v(); print("PASS", k)

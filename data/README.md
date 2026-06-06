@@ -53,8 +53,10 @@ python data/prepare_data.py --dataset flare22 \
 ```
 13-organ label conventions are built in (`FLARE22_LABELS`, `BTCV_LABELS`);
 **verify against your download's docs** and override with `--label_map_json`
-if the release uses a different order. MSD-Lung and BraTS converters are also implemented (CT lung window /
-MRI-FLAIR whole-tumour). The four 2D-image datasets are the next to add.
+if the release uses a different order. All eight converters are implemented: BTCV/FLARE22 (abdomen CT, per-organ),
+MSD-Lung (CT lung window), BraTS (MRI-FLAIR whole-tumour), and the four 2D sets
+CVC-ClinicDB/BUSI/DRIVE/Montgomery (single-target image pairs). The single-target
+ones (CVC, BUSI, MSD-Lung, BraTS) are the fair testbeds for prompt-free inference.
 
 ## Layout produced by `prepare_data.py`
 

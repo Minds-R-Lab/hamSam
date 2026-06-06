@@ -54,6 +54,21 @@ cat <<'CMD'
 CMD
 
 echo
+echo "============ 2-D single-target sets (ideal for prompt-free) ==========="
+echo "Download each, arrange as <root>/images + mask dir(s), then convert:"
+cat <<'CMD'
+  # CVC-ClinicDB (polyp): images/ + masks/ (same stem)
+  python data/prepare_data.py --dataset cvc_clinicdb --images_dir data/raw/cvc/images --labels_dir data/raw/cvc --out data/processed/cvc_clinicdb
+  # BUSI (breast tumour): <x>.png + <x>_mask.png
+  python data/prepare_data.py --dataset busi --images_dir data/raw/busi/images --labels_dir data/raw/busi --out data/processed/busi
+  # DRIVE (retinal vessels): id-paired, .gif masks
+  python data/prepare_data.py --dataset drive --images_dir data/raw/drive/images --labels_dir data/raw/drive --out data/processed/drive
+  # Montgomery (lung): leftMask/ + rightMask/ OR-merged
+  python data/prepare_data.py --dataset montgomery --images_dir data/raw/montgomery/CXR_png --labels_dir data/raw/montgomery/ManualMask --out data/processed/montgomery
+CMD
+echo "(CVC-ClinicDB, BUSI, BraTS, MSD-Lung are single-target -> the fair prompt-free testbeds.)"
+
+echo
 echo "Train on FLARE22 alone now:"
 echo "  python experiments/train_ham_medsam.py --config configs/ham_medsam_abdomen.yaml \\"
 echo "      --encoder ham --loss dice+ce+momentum --seed 42 --output_dir outputs/ham/seed_42 --device cuda"
