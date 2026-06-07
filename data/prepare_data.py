@@ -214,9 +214,9 @@ DATASETS_2D = {
     "kvasir_seg":   dict(name="polyp",        mask_subdirs=["masks"],
                          pair_by="stem", thresh=127),   # JPG masks 0/255
     "isic2017":     dict(name="lesion",       mask_subdirs=["."],
-                         pair_by="stem", mask_suffix="_segmentation", thresh=127),
+                         pair_by="stem", mask_suffix="_segmentation", thresh=0),
     "isic2018":     dict(name="lesion",       mask_subdirs=["."],
-                         pair_by="stem", mask_suffix="_segmentation", thresh=127),
+                         pair_by="stem", mask_suffix="_segmentation", thresh=0),
     "busi":         dict(name="breast_tumor", mask_subdirs=["masks"],
                          pair_by="stem", mask_suffix="_mask", thresh=127),
     "drive":        dict(name="vessel",       mask_subdirs=["masks"],
@@ -326,6 +326,8 @@ def main():
     ap.add_argument("--label_map_json", default=None,
                     help="optional JSON {int_label: name} overriding the default")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--mask_thresh", type=int, default=None,
+                    help="2D: foreground = mask > thresh (override the dataset default).")
     ap.add_argument("--assign_split", choices=["train", "val", "test"], default=None,
                     help="2D: put ALL given images into this split (honor an "
                          "official train/val/test folder; run once per split).")
@@ -339,7 +341,8 @@ def main():
             ap.error("2D dataset: provide --images_dir (and --labels_dir as mask root) or --root")
         convert_image_dataset(img_dir, mask_root, args.out, c["name"],
                               mask_subdirs=c["mask_subdirs"], pair_by=c["pair_by"],
-                              mask_suffix=c.get("mask_suffix"), thresh=c["thresh"],
+                              mask_suffix=c.get("mask_suffix"),
+                              thresh=(args.mask_thresh if args.mask_thresh is not None else c["thresh"]),
                               seed=args.seed, assign_split=args.assign_split)
         return
     cfg = DATASETS[args.dataset]
