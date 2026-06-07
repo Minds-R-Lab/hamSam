@@ -43,6 +43,10 @@ def parse_args():
                    help="bottleneck ablation: A=ConvNeXt-only (capacity-matched "
                         "control), B=oscillator-only. Overrides config.")
     p.add_argument("--loss", default="dice+ce", choices=list(LOSS_FLAGS))
+    p.add_argument("--momentum_signal", default="momentum",
+                   choices=["momentum", "grad_energy", "combo"],
+                   help="boundary signal for the momentum loss: raw momentum, "
+                        "|grad energy| (boundary-peaked), or learned combo.")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output_dir", required=True)
     p.add_argument("--sam_checkpoint", default=None,
@@ -110,6 +114,7 @@ def main():
     ).to(device)
 
     loss_fn = CombinedLoss(multiclass=multiclass, num_classes=num_classes,
+                           momentum_signal=args.momentum_signal,
                            **LOSS_FLAGS[args.loss]).to(device)
 
     train_loader = build_loader(data_root, "train", cfg, batch_size, True,
@@ -166,7 +171,7 @@ def main():
             with amp_autocast(device.type, use_amp, amp_dtype):
                 out = model(img, box=None if model.prompt_free else box)
                 target = tgt.squeeze(1) if multiclass else tgt
-                loss, parts = loss_fn(out["mask"], target, p=out["p"])
+                loss, parts = loss_fn(out["mask"], target, p=out["p"], energy=out["H_map"])
             if not torch.isfinite(loss):       # guard: skip a bad batch
                 nonfinite += 1
                 continue

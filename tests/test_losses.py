@@ -48,6 +48,29 @@ def test_combined_backward_all_terms():
     assert torch.isfinite(logits.grad).all() and torch.isfinite(p.grad).all()
 
 
+
+
+def test_momentum_signal_variants():
+    gt = _square()
+    p = torch.randn(2, 32, 16, 16, requires_grad=True)
+    energy = torch.rand(2, 1, 16, 16)
+    from src.losses import MomentumBoundaryLoss
+    # momentum (no energy needed)
+    assert MomentumBoundaryLoss(signal="momentum", momentum_channels=32)(p, gt).item() >= 0
+    # grad_energy (1-channel input from |grad H|)
+    L = MomentumBoundaryLoss(signal="grad_energy", momentum_channels=32)
+    v = L(p, gt, energy=energy); v.backward(retain_graph=True); assert torch.isfinite(v)
+    # combo (p + |grad H|)
+    Lc = MomentumBoundaryLoss(signal="combo", momentum_channels=32)
+    vc = Lc(p, gt, energy=energy); assert torch.isfinite(vc)
+    # grad_energy without energy must error
+    try:
+        MomentumBoundaryLoss(signal="grad_energy", momentum_channels=32)(p, gt)
+        assert False, "expected error when energy missing"
+    except ValueError:
+        pass
+
+
 if __name__ == "__main__":
     for k, v in sorted(globals().items()):
         if k.startswith("test_"): v(); print("PASS", k)

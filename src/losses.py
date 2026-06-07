@@ -161,27 +161,52 @@ class MomentumBoundaryLoss(nn.Module):
 
     def __init__(self, lambda_p: float = 0.1, clip_dt: float = 20.0,
                  mode: str = 'projection', target: str = 'band',
-                 momentum_channels: int = 256):
+                 momentum_channels: int = 256, signal: str = 'momentum'):
         super().__init__()
         assert mode in ('projection', 'template')
         assert target in ('proximity', 'distance', 'band')
+        assert signal in ('momentum', 'grad_energy', 'combo')
         self.lambda_p = lambda_p
         self.clip_dt = clip_dt
         self.mode = mode
         self.target = target
+        self.signal = signal
+        # input channels to the projection head depend on which signal we read
+        in_ch = {'momentum': momentum_channels, 'grad_energy': 1,
+                 'combo': momentum_channels + 1}[signal]
         if mode == 'projection':
-            self.proj = nn.Conv2d(momentum_channels, 1, 1)
+            self.proj = nn.Conv2d(in_ch, 1, 1)
             self.bce = nn.BCEWithLogitsLoss()
+        # fixed Sobel kernels for |grad H| (boundary = where energy transitions)
+        kx = torch.tensor([[1., 0, -1], [2, 0, -2], [1, 0, -1]]).view(1, 1, 3, 3)
+        self.register_buffer('_sx', kx)
+        self.register_buffer('_sy', kx.transpose(-1, -2).contiguous())
 
-    def forward(self, p, gt_mask):
+    def _grad_energy(self, energy):
+        gx = F.conv2d(energy, self._sx.to(energy.dtype), padding=1)
+        gy = F.conv2d(energy, self._sy.to(energy.dtype), padding=1)
+        return torch.sqrt(gx * gx + gy * gy + 1e-6)        # (B,1,h,w)
+
+    def _input_signal(self, p, energy):
+        if self.signal == 'momentum':
+            return p
+        if energy is None:
+            raise ValueError(f"signal='{self.signal}' needs the energy map (pass energy=H_map)")
+        ge = self._grad_energy(energy)
+        if self.signal == 'grad_energy':
+            return ge
+        return torch.cat([p, ge], dim=1)                   # combo
+
+    def forward(self, p, gt_mask, energy=None):
         if p is None:                       # baseline encoder (bottleneck='none')
             return torch.zeros((), device=gt_mask.device)
-        out_hw = p.shape[-2:]
+        sig = self._input_signal(p, energy)
+        out_hw = sig.shape[-2:]
         with torch.no_grad():
             tgt = _boundary_proximity(gt_mask, out_hw, self.clip_dt, self.target)
 
         if self.mode == 'projection':
-            logit = self.proj(p)            # (B,1,h,w)
+            logit = self.proj(sig)          # (B,1,h,w)
             bce = self.bce(logit, tgt)
             prob = torch.sigmoid(logit).flatten(1)
             t = tgt.flatten(1)
@@ -189,7 +214,7 @@ class MomentumBoundaryLoss(nn.Module):
             return self.lambda_p * (bce + dice.mean())
 
         # template mode
-        p_avg = F.softplus(p.abs().mean(dim=1, keepdim=True))
+        p_avg = F.softplus(sig.abs().mean(dim=1, keepdim=True))
         flat = p_avg.flatten(1)
         mn = flat.min(1, keepdim=True).values.view(-1, 1, 1, 1)
         mx = flat.max(1, keepdim=True).values.view(-1, 1, 1, 1)
@@ -213,7 +238,8 @@ class CombinedLoss(nn.Module):
                  w_dice=1.0, w_ce=1.0, w_hausdorff=1.0,
                  use_hausdorff=False, use_momentum=False,
                  lambda_p=0.1, clip_dt=20.0, momentum_mode='projection',
-                 momentum_target='band', momentum_channels=256):
+                 momentum_target='band', momentum_channels=256,
+                 momentum_signal='momentum'):
         super().__init__()
         self.multiclass = multiclass
         self.num_classes = num_classes
@@ -226,9 +252,10 @@ class CombinedLoss(nn.Module):
             self.hausdorff = HausdorffMaskLoss()
         if use_momentum:
             self.momentum = MomentumBoundaryLoss(lambda_p, clip_dt, momentum_mode,
-                                                 momentum_target, momentum_channels)
+                                                 momentum_target, momentum_channels,
+                                                 signal=momentum_signal)
 
-    def forward(self, logits, target, p=None):
+    def forward(self, logits, target, p=None, energy=None):
         """logits: (B,1,H,W) binary or (B,C,H,W) multiclass.
         target:  (B,1,H,W) {0,1} binary or (B,H,W) int64 multiclass.
         p:       encoder momentum for the momentum loss (or None).
@@ -253,7 +280,7 @@ class CombinedLoss(nn.Module):
             total = total + self.w_hd * hd
         if self.use_momentum:
             mb = self.momentum(p, target if not self.multiclass
-                               else (target > 0).float().unsqueeze(1))
+                               else (target > 0).float().unsqueeze(1), energy=energy)
             out['momentum'] = mb
             total = total + mb
         out['total'] = total
