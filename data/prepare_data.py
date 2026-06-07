@@ -213,6 +213,10 @@ DATASETS_2D = {
                          pair_by="stem", thresh=0),
     "kvasir_seg":   dict(name="polyp",        mask_subdirs=["masks"],
                          pair_by="stem", thresh=127),   # JPG masks 0/255
+    "isic2017":     dict(name="lesion",       mask_subdirs=["."],
+                         pair_by="stem", mask_suffix="_segmentation", thresh=127),
+    "isic2018":     dict(name="lesion",       mask_subdirs=["."],
+                         pair_by="stem", mask_suffix="_segmentation", thresh=127),
     "busi":         dict(name="breast_tumor", mask_subdirs=["masks"],
                          pair_by="stem", mask_suffix="_mask", thresh=127),
     "drive":        dict(name="vessel",       mask_subdirs=["masks"],
@@ -256,7 +260,7 @@ def _find_masks(img_path, mask_dirs, pair_by, mask_suffix):
 def convert_image_dataset(images_dir, mask_root, out_dir, name,
                           mask_subdirs=("masks",), pair_by="stem",
                           mask_suffix=None, thresh=0, split=(0.7, 0.1, 0.2),
-                          seed=42):
+                          seed=42, assign_split=None):
     """2-D image/mask pairs -> training layout. Image-level split (no patient
     grouping). Multiple mask_subdirs are OR-merged (e.g. Montgomery L/R lung).
     Saved as <stem>_org1_<name>.npy so eval groups them as one target."""
@@ -279,7 +283,10 @@ def convert_image_dataset(images_dir, mask_root, out_dir, name,
 
     counts = {"train": 0, "val": 0, "test": 0}
     for i, ip in enumerate(imgs):
-        sp = "train" if i < n_tr else ("val" if i < n_tr + n_va else "test")
+        if assign_split:                       # honor an official split folder
+            sp = assign_split
+        else:
+            sp = "train" if i < n_tr else ("val" if i < n_tr + n_va else "test")
         masks = _find_masks(ip, mask_dirs, pair_by, mask_suffix)
         if not masks:
             print(f"[skip] no mask for {os.path.basename(ip)}")
@@ -319,6 +326,9 @@ def main():
     ap.add_argument("--label_map_json", default=None,
                     help="optional JSON {int_label: name} overriding the default")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--assign_split", choices=["train", "val", "test"], default=None,
+                    help="2D: put ALL given images into this split (honor an "
+                         "official train/val/test folder; run once per split).")
     args = ap.parse_args()
 
     if args.dataset in DATASETS_2D:
@@ -330,7 +340,7 @@ def main():
         convert_image_dataset(img_dir, mask_root, args.out, c["name"],
                               mask_subdirs=c["mask_subdirs"], pair_by=c["pair_by"],
                               mask_suffix=c.get("mask_suffix"), thresh=c["thresh"],
-                              seed=args.seed)
+                              seed=args.seed, assign_split=args.assign_split)
         return
     cfg = DATASETS[args.dataset]
     label_map = cfg.get("labels")
