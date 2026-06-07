@@ -74,11 +74,14 @@ class HamMedSAM(nn.Module):
                  bottleneck='deepest', ablation='none',
                  freeze_prompt_encoder=True, freeze_mask_decoder=False,
                  prompt_free=False, use_pssp_decoder=False,
-                 multiclass_head=False, num_classes=1, input_size=1024):
+                 multiclass_head=False, num_classes=1, input_size=1024,
+                 energy_prompt="box", energy_logit_scale=10.0):
         super().__init__()
         self.input_size = input_size
         self.prompt_free = prompt_free
         self.multiclass = multiclass_head
+        self.energy_prompt = energy_prompt          # "box" or "dense"
+        self.energy_logit_scale = energy_logit_scale
 
         self.image_encoder = HamEncoder(bottleneck=bottleneck, ablation=ablation,
                                         input_size=input_size)
@@ -105,9 +108,32 @@ class HamMedSAM(nn.Module):
             for q in self.mask_decoder.parameters():
                 q.requires_grad = flag
 
-    def _decode(self, feat, box):
+    def _energy_to_maskprompt(self, H_map):
+        """Energy map -> SAM dense mask-prompt logits at 4x embedding size."""
+        es4 = (H_map.shape[-2] * 4, H_map.shape[-1] * 4)
+        m = F.interpolate(H_map.float(), size=es4, mode="bilinear", align_corners=False)
+        flat = m.flatten(1)
+        mn = flat.min(1, keepdim=True).values.view(-1, 1, 1, 1)
+        mx = flat.max(1, keepdim=True).values.view(-1, 1, 1, 1)
+        m = (m - mn) / (mx - mn + 1e-6)                  # per-image [0,1]
+        return (m * 2 - 1) * self.energy_logit_scale     # -> mask logits
+
+    def _decode(self, feat, box, dense_mask=None):
         if self.sam_kind == "sam":
             image_pe = self.prompt_encoder.get_dense_pe()
+            if dense_mask is not None:                   # dense energy prompt, no box
+                ml = self._energy_to_maskprompt(dense_mask)
+                lows = []
+                for i in range(feat.shape[0]):
+                    sp, de = self.prompt_encoder(points=None, boxes=None, masks=ml[i:i + 1])
+                    low_i, _ = self.mask_decoder(
+                        image_embeddings=feat[i:i + 1], image_pe=image_pe,
+                        sparse_prompt_embeddings=sp, dense_prompt_embeddings=de,
+                        multimask_output=False)
+                    lows.append(low_i)
+                return F.interpolate(torch.cat(lows, 0),
+                                     size=(self.input_size, self.input_size),
+                                     mode="bilinear", align_corners=False)
             sparse, dense = self.prompt_encoder(points=None, boxes=box, masks=None)
             # SAM's mask decoder repeat-interleaves image embeddings by the
             # number of prompt tokens, so batched-image training must call it
@@ -140,7 +166,11 @@ class HamMedSAM(nn.Module):
             return out
 
         if self.prompt_free:
-            assert box is None, "prompt_free=True derives the box from H_map."
+            assert box is None, "prompt_free=True derives the prompt from H_map."
+            if self.energy_prompt == "dense":
+                out['mask'] = self._decode(feat, None, dense_mask=H_map)
+                out['box'] = None
+                return out
             box = self.energy_to_box(H_map)
         elif box is None:
             raise ValueError("box is required unless prompt_free=True.")

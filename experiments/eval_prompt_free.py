@@ -44,6 +44,7 @@ def main():
     model = HamMedSAM(sam_checkpoint=mcfg.get("sam_checkpoint"),
                       backend=mcfg.get("backend", "medsam_vitb"),
                       bottleneck=mcfg.get("bottleneck", "deepest"),
+                      energy_prompt=mcfg.get("energy_prompt", "box"),
                       input_size=args.input_size).to(device)
     model.load_state_dict(ckpt["model"], strict=False)
     model.energy_to_box.quantile = args.quantile

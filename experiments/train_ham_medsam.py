@@ -47,6 +47,9 @@ def parse_args():
     p.add_argument("--early_stop_patience", type=int, default=None,
                    help="stop if val Dice does not improve for N validations "
                         "(uniform across runs; 0/None=off). Overrides config.")
+    p.add_argument("--energy_prompt", choices=["box", "dense"], default=None,
+                   help="prompt-free prompt type: box (energy->bbox) or dense "
+                        "(energy map as SAM mask prompt). Overrides config.")
     p.add_argument("--prompt_free", action="store_true",
                    help="train prompt-free: the model derives its box from its own "
                         "energy map each step (use only on SINGLE-TARGET data).")
@@ -81,6 +84,8 @@ def main():
         mcfg["sam_checkpoint"] = args.sam_checkpoint   # persisted via saved cfg
     if args.prompt_free:
         mcfg["prompt_free"] = True
+    if args.energy_prompt is not None:
+        mcfg["energy_prompt"] = args.energy_prompt
     if args.prompt_free_after is not None:
         mcfg["prompt_free"] = False   # warm-start box-prompted, flip later
     bottleneck = args.bottleneck or mcfg["bottleneck"]
@@ -96,6 +101,7 @@ def main():
         use_pssp_decoder=mcfg.get("use_pssp_decoder", False),
         multiclass_head=mcfg.get("multiclass_head", False),
         num_classes=num_classes, input_size=input_size,
+        energy_prompt=mcfg.get("energy_prompt", "box"),
     ).to(device)
 
     loss_fn = CombinedLoss(multiclass=multiclass, num_classes=num_classes,
