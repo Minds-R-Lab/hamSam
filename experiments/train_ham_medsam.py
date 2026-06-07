@@ -50,6 +50,10 @@ def parse_args():
     p.add_argument("--prompt_free", action="store_true",
                    help="train prompt-free: the model derives its box from its own "
                         "energy map each step (use only on SINGLE-TARGET data).")
+    p.add_argument("--prompt_free_after", type=int, default=None,
+                   help="warm-start: train box-prompted, then switch to prompt-free at "
+                        "this epoch (single-target). Recovers box-level quality before "
+                        "adapting to energy boxes.")
     p.add_argument("--data", default=None, help="override data_root; 'synthetic' for smoke test")
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--batch_size", type=int, default=None)
@@ -77,6 +81,8 @@ def main():
         mcfg["sam_checkpoint"] = args.sam_checkpoint   # persisted via saved cfg
     if args.prompt_free:
         mcfg["prompt_free"] = True
+    if args.prompt_free_after is not None:
+        mcfg["prompt_free"] = False   # warm-start box-prompted, flip later
     bottleneck = args.bottleneck or mcfg["bottleneck"]
     if args.encoder in ("baseline", "rvm_plus"):
         bottleneck = "none"
@@ -131,9 +137,15 @@ def main():
                 else tcfg.get("early_stop_patience", 0))
     best = -1.0
     since_improve = 0
+    pf_after = args.prompt_free_after
     for ep in range(epochs):
         if ep == unfreeze_ep:
             model.set_mask_decoder_trainable(True)
+        if pf_after is not None and ep == pf_after and not model.prompt_free:
+            model.prompt_free = True       # switch to prompt-free
+            best, since_improve = -1.0, 0  # metric regime changed -> reset
+            print(f"epoch {ep+1}: switching to PROMPT-FREE training "
+                  f"(energy-derived boxes); best/patience reset")
         model.train()
         for batch in train_loader:
             img = batch["image"].to(device)
