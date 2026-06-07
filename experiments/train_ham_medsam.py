@@ -39,6 +39,9 @@ def parse_args():
     p.add_argument("--config", required=True)
     p.add_argument("--encoder", default="ham", choices=["ham", "baseline", "rvm_plus"])
     p.add_argument("--bottleneck", default=None, choices=[None, "deepest", "all", "none"])
+    p.add_argument("--ablation", default=None, choices=[None, "none", "A", "B"],
+                   help="bottleneck ablation: A=ConvNeXt-only (capacity-matched "
+                        "control), B=oscillator-only. Overrides config.")
     p.add_argument("--loss", default="dice+ce", choices=list(LOSS_FLAGS))
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output_dir", required=True)
@@ -86,6 +89,8 @@ def main():
         mcfg["prompt_free"] = True
     if args.energy_prompt is not None:
         mcfg["energy_prompt"] = args.energy_prompt
+    if args.ablation is not None:
+        mcfg["ablation"] = args.ablation
     if args.prompt_free_after is not None:
         mcfg["prompt_free"] = False   # warm-start box-prompted, flip later
     bottleneck = args.bottleneck or mcfg["bottleneck"]
