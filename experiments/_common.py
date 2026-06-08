@@ -18,7 +18,7 @@ def set_seed(seed):
 
 
 def build_loader(data_root, split, cfg, batch_size, shuffle, input_size,
-                 multiclass, num_classes, num_workers=None):
+                 multiclass, num_classes, num_workers=None, frac=1.0, frac_seed=0):
     if data_root == "synthetic":
         ds = SyntheticSegDataset(n=batch_size * 2, size=input_size,
                                  multiclass=multiclass, num_classes=num_classes,
@@ -32,6 +32,13 @@ def build_loader(data_root, split, cfg, batch_size, shuffle, input_size,
                            normalize=cfg.get("normalize", "none"),
                            box_perturb=cfg.get("box_perturb", 20),
                            multiclass=multiclass, num_classes=num_classes)
+    if frac < 1.0:                       # deterministic label-fraction subsample
+        from torch.utils.data import Subset
+        g = torch.Generator().manual_seed(frac_seed)
+        n_keep = max(1, int(round(len(ds) * frac)))
+        idx = torch.randperm(len(ds), generator=g)[:n_keep].tolist()
+        ds = Subset(ds, idx)
+        print(f"[data] {split}: using {n_keep} samples ({frac:.0%}, frac_seed={frac_seed})")
     nw = num_workers if num_workers is not None else cfg.get("num_workers", 8)
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, num_workers=nw,
                       pin_memory=True, persistent_workers=(nw > 0),

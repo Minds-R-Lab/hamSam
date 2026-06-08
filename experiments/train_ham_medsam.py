@@ -65,6 +65,9 @@ def parse_args():
                         "this epoch (single-target). Recovers box-level quality before "
                         "adapting to energy boxes.")
     p.add_argument("--data", default=None, help="override data_root; 'synthetic' for smoke test")
+    p.add_argument("--train_frac", type=float, default=1.0,
+                   help="fraction of TRAIN labels to use (data-efficiency sweep); "
+                        "subset is deterministic in --seed so encoders see the same data")
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--batch_size", type=int, default=None)
     p.add_argument("--input_size", type=int, default=None)
@@ -118,7 +121,8 @@ def main():
                            **LOSS_FLAGS[args.loss]).to(device)
 
     train_loader = build_loader(data_root, "train", cfg, batch_size, True,
-                                input_size, multiclass, num_classes)
+                                input_size, multiclass, num_classes,
+                                frac=args.train_frac, frac_seed=args.seed)
     try:
         val_loader = build_loader(data_root, "val", cfg, batch_size, False,
                                   input_size, multiclass, num_classes)

@@ -34,11 +34,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default="runs/premise")
     ap.add_argument("--seeds", default="42 43 44")
+    ap.add_argument("--ood_sub", default="ood",
+                    help="subdir holding the OOD eval json (e.g. ood, ph2)")
     args = ap.parse_args()
     seeds = args.seeds.split()
 
     names = {"ham": "Hamiltonian", "variantA": "Variant-A (conv, matched)"}
-    conds = {"indist": "in-dist (ISIC2017)", "ood": "OOD (ISIC2018)"}
+    conds = {"indist": "in-dist (ISIC2017)", args.ood_sub: f"OOD ({args.ood_sub})"}
     table = {}
     for key in names:
         for c in conds:
@@ -71,8 +73,8 @@ def main():
                                 "pooled_std_pp": round(pooled, 2), "verdict": flag}
 
     if all(table[(k, c)] for k in names for c in conds):
-        h_drop = (table[("ham", "indist")]["mean"] - table[("ham", "ood")]["mean"]) * 100
-        a_drop = (table[("variantA", "indist")]["mean"] - table[("variantA", "ood")]["mean"]) * 100
+        h_drop = (table[("ham", "indist")]["mean"] - table[("ham", args.ood_sub)]["mean"]) * 100
+        a_drop = (table[("variantA", "indist")]["mean"] - table[("variantA", args.ood_sub)]["mean"]) * 100
         print(f"\nOOD robustness: Ham drops {h_drop:+.2f}pp vs control {a_drop:+.2f}pp "
               f"under shift (smaller = more robust).")
         summary["ood_robustness"] = {"ham_drop_pp": round(h_drop, 2),
