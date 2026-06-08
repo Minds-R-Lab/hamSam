@@ -54,7 +54,7 @@ def parse_args():
     p.add_argument("--early_stop_patience", type=int, default=None,
                    help="stop if val Dice does not improve for N validations "
                         "(uniform across runs; 0/None=off). Overrides config.")
-    p.add_argument("--energy_prompt", choices=["box", "dense"], default=None,
+    p.add_argument("--energy_prompt", choices=["box", "dense", "learned"], default=None,
                    help="prompt-free prompt type: box (energy->bbox) or dense "
                         "(energy map as SAM mask prompt). Overrides config.")
     p.add_argument("--prompt_free", action="store_true",

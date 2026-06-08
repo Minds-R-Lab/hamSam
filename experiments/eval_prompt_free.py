@@ -65,11 +65,13 @@ def main():
             for b in range(img.shape[0]):
                 res["box"].append(dice_score(pb[b], gt[b]))
                 res["auto"].append(dice_score(pa[b], gt[b]))
-                res["box_iou"].append(box_iou(gtbox[b].tolist(), oa["box"][b].tolist()))
-    summary = {k: round(sum(v) / len(v), 4) for k, v in res.items()}
+                if oa.get("box") is not None:        # box mode only; dense/learned have no box
+                    res["box_iou"].append(box_iou(gtbox[b].tolist(), oa["box"][b].tolist()))
+    summary = {k: round(sum(v) / len(v), 4) for k, v in res.items() if v}
     summary["dice_drop_pp"] = round((summary["box"] - summary["auto"]) * 100, 2)
+    iou_str = f"  auto/GT box IoU={summary['box_iou']:.3f}" if "box_iou" in summary else ""
     print(f"box dice={summary['box']:.4f}  auto dice={summary['auto']:.4f}  "
-          f"drop={summary['dice_drop_pp']}pp  auto/GT box IoU={summary['box_iou']:.3f}")
+          f"drop={summary['dice_drop_pp']}pp{iou_str}")
     if args.output_dir:
         os.makedirs(args.output_dir, exist_ok=True)
         json.dump(summary, open(os.path.join(args.output_dir, "prompt_free.json"), "w"), indent=2)

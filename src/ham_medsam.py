@@ -80,7 +80,7 @@ class HamMedSAM(nn.Module):
         self.input_size = input_size
         self.prompt_free = prompt_free
         self.multiclass = multiclass_head
-        self.energy_prompt = energy_prompt          # "box" or "dense"
+        self.energy_prompt = energy_prompt          # "box" | "dense" | "learned"
         self.energy_logit_scale = energy_logit_scale
 
         self.image_encoder = HamEncoder(bottleneck=bottleneck, ablation=ablation,
@@ -97,6 +97,18 @@ class HamMedSAM(nn.Module):
                 q.requires_grad = False
 
         self.energy_to_box = EnergyToBox(sam_input_size=input_size)
+        # Learned prompt head: maps the bottleneck phase-space
+        # [q (=feat, 256ch), p (256ch), H (1ch)] -> a single-channel soft
+        # mask-prompt logit map, trained end-to-end via the seg loss so the
+        # prompt is optimised *for SAM* rather than hand-picked (energy map).
+        if energy_prompt == "learned":
+            in_ch = 256 + 256 + 1
+            self.prompt_head = nn.Sequential(
+                nn.Conv2d(in_ch, 128, 3, padding=1), nn.GroupNorm(8, 128),
+                nn.GELU(), nn.Conv2d(128, 1, 1))
+            # init last conv near zero -> starts as a ~neutral prompt
+            nn.init.zeros_(self.prompt_head[-1].weight)
+            nn.init.zeros_(self.prompt_head[-1].bias)
         self.use_pssp = use_pssp_decoder
         if use_pssp_decoder:
             self.pssp = PSSPModule(256)
@@ -109,20 +121,33 @@ class HamMedSAM(nn.Module):
                 q.requires_grad = flag
 
     def _energy_to_maskprompt(self, H_map):
-        """Energy map -> SAM dense mask-prompt logits at 4x embedding size."""
-        es4 = (H_map.shape[-2] * 4, H_map.shape[-1] * 4)
-        m = F.interpolate(H_map.float(), size=es4, mode="bilinear", align_corners=False)
+        """Energy map -> per-image normalised mask-prompt logits (embedding res).
+
+        The 4x upsample SAM's prompt encoder expects is applied uniformly in
+        _decode, so this returns logits at the embedding resolution.
+        """
+        m = H_map.float()
         flat = m.flatten(1)
         mn = flat.min(1, keepdim=True).values.view(-1, 1, 1, 1)
         mx = flat.max(1, keepdim=True).values.view(-1, 1, 1, 1)
         m = (m - mn) / (mx - mn + 1e-6)                  # per-image [0,1]
         return (m * 2 - 1) * self.energy_logit_scale     # -> mask logits
 
-    def _decode(self, feat, box, dense_mask=None):
+    def _learned_maskprompt(self, feat, p, H_map):
+        """Learned 1-channel soft mask-prompt from phase-space [q,p,H].
+
+        Returns raw logits at embedding res; _decode upsamples 4x for SAM.
+        """
+        x = torch.cat([feat, p, H_map], dim=1)
+        return self.prompt_head(x)                        # (B,1,es,es) logits
+
+    def _decode(self, feat, box, dense_logits=None):
         if self.sam_kind == "sam":
             image_pe = self.prompt_encoder.get_dense_pe()
-            if dense_mask is not None:                   # dense energy prompt, no box
-                ml = self._energy_to_maskprompt(dense_mask)
+            if dense_logits is not None:                 # dense mask prompt, no box
+                es4 = (feat.shape[-2] * 4, feat.shape[-1] * 4)
+                ml = F.interpolate(dense_logits.float(), size=es4,
+                                   mode="bilinear", align_corners=False)
                 lows = []
                 for i in range(feat.shape[0]):
                     sp, de = self.prompt_encoder(points=None, boxes=None, masks=ml[i:i + 1])
@@ -168,7 +193,16 @@ class HamMedSAM(nn.Module):
         if self.prompt_free:
             assert box is None, "prompt_free=True derives the prompt from H_map."
             if self.energy_prompt == "dense":
-                out['mask'] = self._decode(feat, None, dense_mask=H_map)
+                dl = self._energy_to_maskprompt(H_map)
+                out['mask'] = self._decode(feat, None, dense_logits=dl)
+                out['box'] = None
+                return out
+            if self.energy_prompt == "learned":
+                assert p is not None and H_map is not None, \
+                    "energy_prompt='learned' needs the Hamiltonian bottleneck (p,H)."
+                dl = self._learned_maskprompt(feat, p, H_map)
+                out['mask'] = self._decode(feat, None, dense_logits=dl)
+                out['prompt_logits'] = dl
                 out['box'] = None
                 return out
             box = self.energy_to_box(H_map)
