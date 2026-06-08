@@ -47,8 +47,14 @@ def main():
     model = HamMedSAM(sam_checkpoint=mcfg.get("sam_checkpoint"),
                       backend=mcfg.get("backend", "medsam_vitb"),
                       bottleneck=mcfg.get("bottleneck", "deepest"),
+                      ablation=mcfg.get("ablation", "none"),
+                      energy_prompt=mcfg.get("energy_prompt", "box"),
                       input_size=args.input_size).to(dev)
-    model.load_state_dict(ckpt["model"], strict=False)
+    _inc = model.load_state_dict(ckpt["model"], strict=False)
+    if _inc.missing_keys:
+        import warnings
+        warnings.warn(f"{len(_inc.missing_keys)} missing param(s) when loading "
+                      f"checkpoint (arch/cfg mismatch?): {_inc.missing_keys[:5]}...")
     model.eval()
 
     loader = build_loader(args.data, "test", {}, args.batch_size, False,

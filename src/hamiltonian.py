@@ -196,7 +196,18 @@ class HamiltonianBottleneck(nn.Module):
         self.dim = dim
 
         if ablation == 'A':
-            self.conv_only = ConvNeXtBlock(dim)
+            # Capacity-matched ConvNeXt-only control. The full Hamiltonian
+            # bottleneck (ConvNeXt block + 4-dir oscillator scan + merges +
+            # pos_proj + energy SE + gate) has ~2.4x the params of a single
+            # ConvNeXt block, so a 1-block control would conflate "mechanism"
+            # with "parameters". Here we stack 2 ConvNeXt blocks plus residual
+            # 1x1 channel mixers, sized so the param count matches the full
+            # bottleneck to within ~2% (at dim=256: 1.276M vs 1.300M). Any
+            # Ham advantage over this control is therefore attributable to the
+            # Hamiltonian *mechanism*, not to added capacity.
+            self.conv_only = nn.Sequential(ConvNeXtBlock(dim), ConvNeXtBlock(dim))
+            self.mixers = nn.ModuleList([nn.Conv2d(dim, dim, 1) for _ in range(3)])
+            self.mix_act = nn.GELU()
             self.drop = nn.Dropout2d(drop_rate)
             return
 
@@ -225,7 +236,10 @@ class HamiltonianBottleneck(nn.Module):
 
     def forward(self, x):
         if self.ablation == 'A':
-            out = self.drop(self.conv_only(x))
+            out = self.conv_only(x)
+            for mix in self.mixers:                 # residual pointwise mixing
+                out = out + self.mix_act(mix(out))
+            out = self.drop(out)
             return out, None, None
 
         if self.ablation != 'B':

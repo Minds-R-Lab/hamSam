@@ -46,7 +46,11 @@ def main():
                       bottleneck=mcfg.get("bottleneck", "deepest"),
                       energy_prompt=mcfg.get("energy_prompt", "box"),
                       input_size=args.input_size).to(device)
-    model.load_state_dict(ckpt["model"], strict=False)
+    _inc = model.load_state_dict(ckpt["model"], strict=False)
+    if _inc.missing_keys:
+        import warnings
+        warnings.warn(f"{len(_inc.missing_keys)} missing param(s) when loading "
+                      f"checkpoint (arch/cfg mismatch?): {_inc.missing_keys[:5]}...")
     model.energy_to_box.quantile = args.quantile
 
     loader = build_loader(args.data, "test", {}, 4, False, args.input_size, False, 1)
