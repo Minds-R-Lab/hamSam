@@ -40,10 +40,40 @@ class MedSegDataset(Dataset):
         self.box_perturb = box_perturb if split == 'train' else 0
         idir = os.path.join(root, split, 'images')
         self.images = sorted(sum([glob.glob(os.path.join(idir, e))
-                                  for e in ('*.png', '*.npy', '*.jpg')], []))
+                                  for e in ('*.png', '*.npy', '*.jpg', '*.jpeg')], []))
         self.mask_dir = os.path.join(root, split, 'masks')
         if not self.images:
             raise FileNotFoundError(f"no images under {idir}")
+        # Resolve a mask path per image up front so we can fail loudly if the
+        # naming does not line up (otherwise missing masks silently become
+        # all-zero targets -> degenerate val_dice=1.0 / loss=0).
+        self._masks = [self._resolve_mask(p) for p in self.images]
+        matched = sum(m is not None for m in self._masks)
+        if matched == 0:
+            raise FileNotFoundError(
+                f"{root}/{split}: {len(self.images)} images but 0 matching masks "
+                f"under {self.mask_dir}. Mask stems must equal image stems "
+                f"(an optional _segmentation/_mask/_seg suffix is allowed). For raw "
+                f"ISIC/DRIVE/etc., run data/prepare_data.py and point --data at the "
+                f"processed dir.")
+        if matched < len(self.images):
+            import warnings
+            warnings.warn(f"{root}/{split}: only {matched}/{len(self.images)} images "
+                          f"have a matching mask; the rest would get empty masks.")
+
+    _MASK_SUFFIXES = ("", "_segmentation", "_mask", "_seg", "_Segmentation", "_anno")
+    _MASK_EXTS = ('.png', '.npy', '.jpg', '.jpeg', '.tif', '.tiff', '.gif', '.bmp')
+
+    def _resolve_mask(self, ipath):
+        base = os.path.splitext(os.path.basename(ipath))[0]
+        for suf in self._MASK_SUFFIXES:
+            for e in self._MASK_EXTS:
+                cand = os.path.join(self.mask_dir, base + suf + e)
+                if os.path.exists(cand):
+                    return cand
+        hits = [p for e in self._MASK_EXTS
+                for p in glob.glob(os.path.join(self.mask_dir, base + '_*' + e))]
+        return hits[0] if len(hits) == 1 else None
 
     def __len__(self):
         return len(self.images)
@@ -56,12 +86,7 @@ class MedSegDataset(Dataset):
 
     def __getitem__(self, i):
         ipath = self.images[i]
-        base = os.path.splitext(os.path.basename(ipath))[0]
-        mpath = None
-        for e in ('.png', '.npy', '.jpg'):
-            cand = os.path.join(self.mask_dir, base + e)
-            if os.path.exists(cand):
-                mpath = cand; break
+        mpath = self._masks[i]
         img, sp = preprocess_image(self._load(ipath), self.size, self.normalize)
         mask = preprocess_mask(self._load(mpath), self.size, sp) if mpath else \
             torch.zeros(self.size, self.size)
